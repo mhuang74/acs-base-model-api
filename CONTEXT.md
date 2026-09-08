@@ -1,45 +1,54 @@
-# ACS Base-Model API
+# ACS Base Model Platform
 
-OpenAI-compatible API wrapper in front of a Modal/vLLM base-model endpoint, with auth, key/budget management, usage accounting, and a server-rendered web UI (Workbench, Loom, Compare).
+An OpenAI-compatible API wrapper in front of a Modal/vLLM base-model endpoint, plus auth, key/budget management, usage accounting, and a server-rendered web UI. This glossary records the canonical domain language.
 
 ## Language
 
-### Workbench sessions
+### Workbench & reproduction
 
-**Session prompt** (`prompt_text`):
-The rolling text buffer carried by a Workbench chat session: the last submitted prompt, plus the last completion when the session continues from it. What the single-pane composer renders. Not a pure prompt — treat as prompt-or-continuation-context depending on the last action.
-_Avoid_: "the prompt" (ambiguous), prompt history
+**Session**:
+A user-owned, server-side container of Runs with a stable URL, holding the working prompt and the Runs performed against it.
+_Avoid_: chat, conversation, workspace
 
-**Prompt baseline** (`prompt_before`):
-The text a generation ran on, before its completion was appended. The authoritative prompt/completion boundary; only the server knows it.
-_Avoid_: original prompt
+**Run**:
+One completion request and its recorded outcome: the sampling settings used, the prompt prefix, the completion, the model identity, and the timestamps.
+_Avoid_: snapshot, generation, completion (record)
 
-**Roll-forward**:
-The act of appending a completion to the session prompt (server-side after a completed single-pane run, client-side while streaming).
-_Avoid_: chaining, chaining carryover
+**Sampling settings**:
+The parameter set chosen for a Run: temperature, top_p, top_k, min_p, presence/frequency/repetition penalties, seed, stop sequences, and the logprobs toggle.
+_Avoid_: knobs, hyperparameters, recipe, config
 
-**Continue**:
-Running a new generation on the roll-forward. The only intended path where a completion joins the next prompt.
+**Draft**:
+The URL-encoded sampling settings carried in the workbench URL; authoritative for the next Run while present.
+_Avoid_: pending settings, staged params
 
-### Workbench modes
+**Compare lane**:
+A Run produced as one of several alternatives within a single compare action.
+_Avoid_: branch, variant
 
-**Single pane**:
-The Workbench mode holding the session prompt textarea and one output box.
+**Compare snapshot**:
+The grouping of lanes produced by one compare action.
+_Avoid_: diff, matrix
 
-**Compare**:
-A Workbench mode that fans one shared prompt out to two or more model lanes in one batch. Inheriting anything beyond the prompt baseline from a single-pane session is a defect, not a feature.
-_Avoid_: A/B mode, dual lane
+**Reproducible Run**:
+A Run recorded with an effective seed, or with temperature 0. Only Reproducible Runs back the reproduction promise.
+_Avoid_: deterministic run
 
-**Lane**:
-One model's generation inside a Compare batch; lanes share a compare run identity and are isolated from each other's failures.
+**Reproduction**:
+Re-running a Run's sampling settings against the upstream to obtain the same outcome; guaranteed only for temperature 0, best-effort otherwise (upstream deployments may differ).
+_Avoid_: replay, rerun
 
-### Snapshots
+**Export document**:
+The versioned JSON file describing one Session and its Runs; the unit of interchange between users.
+_Avoid_: backup, dump, transcript file
 
-**Snapshot** (`ChatSnapshot`):
-A saved prompt-before/completion pair from a single-pane run, used for restore and the heatmap.
+**Import**:
+Bringing an Export document in as a new Session owned by the importing user, with sampling settings normalized to this deployment's parameter ranges.
+_Avoid_: restore, merge
 
-**Restore**:
-Putting a snapshot's prompt baseline back into the session prompt. Restore means the baseline, not the roll-forward.
+**Restore chain**:
+The order of authority for composer settings on page load: Draft, then the Session's most recent successful Run, then built-in defaults.
+_Avoid_: fallback logic, hydration
 
 ### Usage accounting
 
