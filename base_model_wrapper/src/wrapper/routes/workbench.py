@@ -243,13 +243,35 @@ async def _render_chat(
     session: AsyncSession | None = None,
     mode: str = "single",
 ):
-    registry = request.app.state.models
+    # Compare-mode prompt prefill (issue #11): the session prompt is a rolling
+    # continuation buffer by design, so it holds prompt + completion after a
+    # single-pane run. Compare must start from the prompt baseline instead.
+    # The boundary comes from the latest roll-forward snapshot (written in the
+    # same transaction as the roll-forward — a failed/cancelled-with-partial
+    # run also writes one), NOT the latest generation: a failed run has no
+    # snapshot, and a generation row restored-over would hold the wrong
+    # boundary. Substitute the baseline only when the session prompt is
+    # EXACTLY baseline + completion — the unmodified roll-forward. Every other
+    # state (post-run edits, fresh typing, a Compare run's write-back, snapshot
+    # restore) fails the equality check and carries over untouched.
+    compare_prompt = chat.prompt_text if chat is not None else ""
+    compare_roll_forward = None
+    if chat is not None and snapshots:
+        last = snapshots[0]  # session_snapshots returns newest first
+        rolled = last.prompt_before + last.completion_text
+        if chat.prompt_text == rolled:
+            compare_roll_forward = {
+                "baseline": last.prompt_before,
+                "completion": last.completion_text,
+            }
+            compare_prompt = last.prompt_before
     # Per-model startup/warmth label for the picker. Always-on vs needs-startup
     # is registry-config-derived (ACS-80, incl. enabled ModelWarmWindow rows);
     # on-demand models additionally get a soft "recently used - usually warm"
     # hint from the in-memory last_completion_at map (ACS-98). Both are RPC-free
     # — no per-render Modal call, so TTFB stays fast (the reason the old live
     # pill was retired). If we have a DB session, look up warm-window overrides.
+    registry = request.app.state.models
     if session is not None:
         warm_windows = await workbench_svc.all_warm_window_rows(session)
     else:
@@ -289,7 +311,15 @@ async def _render_chat(
             "model_labels": model_labels,
             # Which composer the unified workbench opens in (ACS-163). "compare"
             # renders the multi-lane pane; anything else falls back to single.
+            # Compare-pane prefill (issue #11): the baseline-substituted shared
+            # prompt (see top of this function) plus the exact boundary data the
+            # client toggle guard needs to recognise the unmodified roll-forward
+            # in the single textarea. ``compare_roll_forward`` is None whenever
+            # the session prompt is NOT an unmodified roll-forward (no snapshot,
+            # edits, restore, fresh typing), and the toggle then copies verbatim.
             "mode": "compare" if mode == "compare" else "single",
+            "compare_prompt": compare_prompt,
+            "compare_roll_forward": compare_roll_forward,
             # Compare-pane config (folded into the same page as single-pane).
             "default_max_tokens": _CHAT_DEFAULT_MAX_TOKENS,
             "max_max_tokens": _CHAT_MAX_MAX_TOKENS,
