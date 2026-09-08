@@ -1,6 +1,6 @@
 # Spec: Monthly Token Usage Report (usage per model)
 
-Published as [issue #10](https://github.com/mhuang74/acs-base-model-api/issues/10) — implementation spec for [#2](https://github.com/mhuang74/acs-base-model-api/issues/2). Labels: `ready-for-agent`.
+Published as [issue #10](https://github.com/<owner>/acs-base-model-api/issues/10) — implementation spec for [#2](https://github.com/<owner>/acs-base-model-api/issues/2). Labels: `ready-for-agent`.
 
 ## Problem Statement
 

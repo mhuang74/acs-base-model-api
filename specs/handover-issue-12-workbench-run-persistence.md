@@ -1,7 +1,7 @@
 # Handover — Issue #12: Workbench Run persistence, Restore chain, v2 Session export/import
 
 Repo: `acs_workbench_export_import` (ACS base-model platform).
-Spec: GitHub issue #12 on `mhuang74-learning-playground/acs-base-model-api`; vocabulary in root `CONTEXT.md`; decisions in `docs/adr/0001-best-effort-reproduction-and-v2-session-format.md`. Read both before touching anything.
+Spec: GitHub issue #12 on `<owner>/acs-base-model-api`; vocabulary in root `CONTEXT.md`; decisions in `docs/adr/0001-best-effort-reproduction-and-v2-session-format.md`. Read both before touching anything.
 
 Two phases on one data model:
 - **Phase 1** — Run persistence (extended Sampling settings per Run), Restore chain (Draft → last successful Run → defaults), compare lane prefill.

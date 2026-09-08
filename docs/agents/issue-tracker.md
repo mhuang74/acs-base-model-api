@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repo (`mhuang74-learning-playground/acs-base-model-api`) live as GitHub issues. Use the `gh` CLI for all operations.
+Issues and specs for this repo (`<owner>/acs-base-model-api`) live as GitHub issues. Use the `gh` CLI for all operations.
 
 ## Conventions
 
@@ -11,7 +11,7 @@ Issues and specs for this repo (`mhuang74-learning-playground/acs-base-model-api
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
-The repo is inferred from `git remote -v` (`origin` → `mhuang74-learning-playground/acs-base-model-api`); `gh` does this automatically when run inside a clone.
+The repo is inferred from `git remote -v` (`origin` → `<owner>/acs-base-model-api`); `gh` does this automatically when run inside a clone.
 
 ## Pull requests as a triage surface
 

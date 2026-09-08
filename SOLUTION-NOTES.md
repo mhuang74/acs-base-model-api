@@ -1,6 +1,6 @@
 # SOLUTION NOTES
 
-Repo: https://github.com/mhuang74/acs-base-model-api — browse Issues, PRs, and contextual files referenced below.
+Repo: https://github.com/<owner>/acs-base-model-api — browse Issues, PRs, and contextual files referenced below.
 
 ## Compare lanes run on the prompt baseline (resolves #5)
 

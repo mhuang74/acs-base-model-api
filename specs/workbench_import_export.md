@@ -1,6 +1,6 @@
 # Spec: Workbench Run persistence, Restore chain, and v2 Session export/import
 
-> Published as [mhuang74/acs-base-model-api#12](https://github.com/mhuang74/acs-base-model-api/issues/12); supersedes the raw complaint in #6.
+> Published as [<owner>/acs-base-model-api#12](https://github.com/<owner>/acs-base-model-api/issues/12); supersedes the raw complaint in #6.
 
 Resolves #6. Vocabulary per root `CONTEXT.md` (Session, Run, Sampling settings, Draft, Compare lane, Compare snapshot, Reproducible Run, Export document, Import, Restore chain); decisions per `docs/adr/0001-best-effort-reproduction-and-v2-session-format.md`.
 

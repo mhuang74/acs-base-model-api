@@ -144,7 +144,7 @@ API key:  acs-bm-mvtlb5ck-lyqYfbKB8MwZ_oKxBolpvnt-C5x3iYwFmdmrFKWUrCo
 
 ### Issue tracker
 
-Issues are tracked as GitHub Issues in `mhuang74-learning-playground/acs-base-model-api` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues are tracked as GitHub Issues in `<owner>/acs-base-model-api` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
