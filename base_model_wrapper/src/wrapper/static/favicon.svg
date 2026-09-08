@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="ACS Infra">
+  <rect width="64" height="64" rx="14" fill="#1d7a93"/>
+  <path d="M19 46 L32 18 L45 46" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="24.5" y1="34" x2="39.5" y2="34" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+</svg>

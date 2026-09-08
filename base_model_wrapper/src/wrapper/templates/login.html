@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Sign in — ACS Infra{% endblock %}
+{% block content %}
+<h1>Sign in</h1>
+<p class="lead" style="margin-bottom: 2rem;">Access your dashboard, API keys, and the workbench.</p>
+
+{% if flash_message %}<p class="success" style="max-width: 420px;">{{ flash_message }}</p>{% endif %}
+{% if error %}<p class="error" style="max-width: 420px;">{{ error }}</p>{% endif %}
+
+<form action="/login" method="post">
+  <label>Email
+    <input type="email" name="email" required autofocus value="{{ email or '' }}">
+  </label>
+  <label>Password
+    <input type="password" name="password" required>
+  </label>
+  <div>
+    <button type="submit">Sign in</button>
+  </div>
+</form>
+
+<p class="muted" style="margin-top: 1rem; max-width: 420px;">
+  <a href="/forgot-password">Forgot password?</a>
+</p>
+
+<p class="muted" style="margin-top: 1.75rem; max-width: 420px;">
+  Approved or invited? Your account already exists — just sign in above.
+  Approved but haven't set a password yet? Use the
+  <strong>“Set your password”</strong> link in your approval email, or
+  <a href="/forgot-password">request a new one</a>.
+</p>
+{# An application in review has no password yet, so a sign-in attempt can only
+   return the generic failure — say so here rather than leave them guessing
+   (ACS-313 review finding). #}
+<p class="muted" style="margin-top: 0.75rem; max-width: 420px;">
+  Applied recently? Applications are reviewed by hand and you'll get an email
+  when yours has been — there's nothing to sign in with until then.
+</p>
+<p class="muted" style="margin-top: 0.75rem; max-width: 420px;">
+  {% if request.app.state.settings.signup_enabled %}
+    No account yet? <a href="/signup">Apply for access</a>.
+  {% else %}
+    No account yet? Email <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a>.
+  {% endif %}
+</p>
+{% endblock %}

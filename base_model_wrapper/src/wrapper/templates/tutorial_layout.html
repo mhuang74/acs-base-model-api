@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+{# Multi-page /tutorial layout (ACS-89). Three-column shell: left page nav,
+   middle docs content, right "On this page" TOC. Both rails sticky.
+
+   Sub-templates: extend this layout and fill ``{% block docs_main %}`` with
+   the rendered page body. Override ``{% block docs_head %}`` to inject
+   per-page head content (e.g. the legacy-fragment redirect script on the
+   Overview page).
+
+   Block hierarchy:
+     base.html#head_extra  ←  tutorial_layout.html (docs CSS + ``docs_head``)
+                                ↑
+                            tutorial_page.html (no head changes typically)
+#}
+{% block title %}{{ page.title }} — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  /* Modal-style docs site (ACS-89). The base.html ``<main>`` has a
+     max-width: 980px; we widen it to fit the three-column shell. The :has()
+     selector keeps the override scoped to docs pages — every other route
+     still gets the narrower content column.
+     Browser support: :has() ships in Safari 15.4 / Chrome 105 / Firefox 121.
+     Older browsers fall back to the 980px ``<main>`` and the .docs-shell
+     CSS just centres itself inside that — degraded but readable. */
+  main:has(.docs-shell) {
+    max-width: none;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .docs-shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 220px;
+    gap: 2.5rem;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+  .docs-sidebar, .docs-toc {
+    position: sticky;
+    top: 1rem;
+    align-self: start;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
+  .docs-content { min-width: 0; }
+
+  /* --- Left nav -------------------------------------------------------- */
+  .docs-sidebar nav ul { list-style: none; margin: 0; padding: 0; }
+  .docs-sidebar nav > ul > li { margin: 0 0 0.25rem; }
+  .docs-sidebar nav a {
+    display: block;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.92rem;
+    color: var(--fg-soft);
+    border-radius: 4px;
+    line-height: 1.4;
+  }
+  .docs-sidebar nav a:hover { background: var(--surface-alt); color: var(--fg); text-decoration: none; }
+  .docs-sidebar nav a.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .docs-sidebar nav .nav-section {
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    padding: 0.5rem 0.6rem 0.25rem;
+    font-weight: 600;
+  }
+  .docs-sidebar nav ul ul { margin-left: 0.6rem; }
+  .docs-sidebar nav ul ul a { font-size: 0.88rem; }
+
+  /* --- Right TOC ------------------------------------------------------- */
+  .docs-toc h2 {
+    font-family: var(--font-sans);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0 0 0.5rem;
+  }
+  .docs-toc ul { list-style: none; margin: 0; padding: 0; }
+  .docs-toc li { margin: 0; }
+  .docs-toc a {
+    display: block;
+    padding: 0.22rem 0.6rem;
+    font-size: 0.85rem;
+    color: var(--fg-soft);
+    border-left: 2px solid transparent;
+    line-height: 1.4;
+  }
+  .docs-toc a:hover { color: var(--fg); text-decoration: none; }
+  .docs-toc a.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .docs-toc ul ul a { padding-left: 1.4rem; font-size: 0.82rem; }
+
+  /* --- Docs content typography (lifted from the legacy tutorial.html) -- */
+  .docs-content { font-size: 0.97rem; line-height: 1.7; color: var(--fg-soft); }
+  .docs-content h1 { font-size: 1.85rem; margin: 0 0 1rem; }
+  .docs-content h2 {
+    margin-top: 2.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    font-size: 1.35rem;
+    scroll-margin-top: 1.5rem;
+  }
+  .docs-content h3 {
+    margin-top: 1.75rem;
+    font-size: 1.1rem;
+    scroll-margin-top: 1.5rem;
+  }
+  .docs-content h2:first-child, .docs-content h1:first-child {
+    border-top: 0; padding-top: 0; margin-top: 0;
+  }
+  .docs-content p { margin: 0 0 1rem; }
+  /* Callout notes (markdown ``>`` blockquotes). Without this they fall back to
+     the UA default ``margin-inline: 40px`` — the stray left indent. Style them
+     as left-accent notes consistent with the beta banner instead. */
+  .docs-content blockquote {
+    margin: 1rem 0 1.25rem;
+    padding: 0.7rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    color: var(--fg-soft);
+  }
+  .docs-content blockquote > :first-child { margin-top: 0; }
+  .docs-content blockquote > :last-child { margin-bottom: 0; }
+  .docs-content blockquote strong { color: var(--accent); }
+  .docs-content ul, .docs-content ol { padding-left: 1.4rem; margin: 0 0 1rem; }
+  .docs-content li { margin-bottom: 0.4rem; }
+  .docs-content pre {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    padding: 0.9rem 1.1rem;
+    border-radius: var(--radius);
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    font-family: var(--font-mono);
+    margin: 1rem 0 1.25rem;
+    position: relative;
+  }
+  .docs-content code { font-family: var(--font-mono); font-size: 0.88em; }
+  .docs-content pre code { background: transparent; padding: 0; border: 0; display: block; }
+  .docs-content table {
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.92rem;
+  }
+  .docs-content table th,
+  .docs-content table td {
+    border: 1px solid var(--border);
+    padding: 0.45rem 0.75rem;
+  }
+  .docs-content table th {
+    background: var(--surface-alt);
+    text-align: left;
+    font-weight: 600;
+    color: var(--fg);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.92rem;
+  }
+  /* Underline in-content links so they read as clickable — the accent colour
+     alone wasn't a strong enough affordance, especially for links that wrap
+     inline `code` (which otherwise look like a plain code span). Scoped to
+     .docs-content, so the left-nav / right-TOC links keep their own styling. */
+  .docs-content a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  /* A code span that is itself a link inherits the link colour + underline,
+     instead of rendering as unclickable monospace. */
+  .docs-content a code { color: inherit; }
+  /* Long inline URLs and identifiers can otherwise blow out the line width. */
+  .docs-content { overflow-wrap: anywhere; word-wrap: break-word; }
+  /* Tables can be arbitrarily wide; scroll instead of overflowing. */
+  .docs-content table { display: block; max-width: 100%; overflow-x: auto; }
+
+  /* One-click copy button on every code block (lifted from legacy tutorial). */
+  .docs-content .copy-btn {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.45rem;
+    padding: 0.18rem 0.5rem;
+    font-family: var(--font-sans);
+    font-size: 0.72rem;
+    line-height: 1.4;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 120ms, color 120ms, border-color 120ms;
+  }
+  .docs-content pre:hover .copy-btn,
+  .docs-content .copy-btn:focus-visible { opacity: 1; }
+  .docs-content .copy-btn:hover { color: var(--fg); border-color: var(--border-strong); }
+  .docs-content .copy-btn.copied { color: var(--success); border-color: var(--success-border); }
+
+  /* highlight.js tokens, themed through the app's CSS vars (auto light/dark). */
+  .docs-content .hljs { color: var(--fg-soft); background: transparent; }
+  .docs-content .hljs-comment,
+  .docs-content .hljs-quote { color: var(--muted); font-style: italic; }
+  .docs-content .hljs-keyword,
+  .docs-content .hljs-selector-tag,
+  .docs-content .hljs-meta .hljs-keyword { color: var(--accent-2); }
+  .docs-content .hljs-built_in,
+  .docs-content .hljs-literal,
+  .docs-content .hljs-number { color: var(--accent); }
+  .docs-content .hljs-string,
+  .docs-content .hljs-attr,
+  .docs-content .hljs-attribute { color: var(--success); }
+  .docs-content .hljs-title,
+  .docs-content .hljs-title.function_,
+  .docs-content .hljs-section { color: var(--fg); font-weight: 600; }
+  .docs-content .hljs-meta,
+  .docs-content .hljs-params { color: var(--muted); }
+
+  /* ACS-68: "private beta" banner shown only to logged-out viewers — the
+     /tutorial route is public so prospective collaborators can read the docs,
+     but they still need an invite to mint a key. */
+  .tutorial-beta-banner {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    color: var(--fg);
+    padding: 0.85rem 1.1rem;
+    border-radius: var(--radius);
+    font-size: 0.95rem;
+    line-height: 1.55;
+    margin: 0 0 2rem;
+  }
+  .tutorial-beta-banner strong { color: var(--accent); }
+  .tutorial-authed-cta {
+    display: inline-block;
+    margin: 0.25rem 0 1.5rem;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  /* The "Go to Dashboard →" CTA is a styled call-to-action, not prose — keep it
+     underline-free despite the .docs-content a rule above. */
+  .tutorial-authed-cta a { color: var(--accent); text-decoration: none; }
+
+  /* Tablet/mobile: collapse the right TOC, sidebar becomes a top strip. */
+  @media (max-width: 1024px) {
+    .docs-shell {
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+    .docs-toc { display: none; }
+    .docs-sidebar { position: static; max-height: none; overflow-y: visible; }
+  }
+  @media (max-width: 480px) {
+    .docs-content { font-size: 0.92rem; }
+    .docs-content h1 { font-size: 1.5rem; }
+    .docs-content h2 { font-size: 1.2rem; }
+    .docs-content pre { font-size: 0.78rem; padding: 0.7rem 0.85rem; }
+  }
+  .docs-llms-link { margin-top: 1rem; font-size: 0.8rem; }
+  .docs-llms-link a { color: var(--fg-soft); }
+</style>
+{# Machine-discoverable pointer to the single-page, plain-markdown docs (for
+   LLMs that fetch a tutorial page a human handed them). #}
+<link rel="alternate" type="text/markdown" title="Full docs on one page (for LLMs)" href="/llms.txt">
+{% block docs_head %}{% endblock %}
+{% endblock %}
+
+{% block content %}
+<div class="docs-shell">
+  <aside class="docs-sidebar" aria-label="Tutorial navigation">
+    {% include "_tutorial_sidebar.html" %}
+    <p class="docs-llms-link">
+      <a href="/llms.txt">📄 Full docs on one page (for LLMs) →</a>
+    </p>
+  </aside>
+
+  <article class="docs-content">
+    {% if not user %}
+    {% if request.app.state.settings.signup_enabled %}
+    <div class="tutorial-beta-banner" role="note">
+      <strong>Open beta</strong> — <a href="/signup">apply for access</a>. We
+      review each application and email you when it's approved, with your API
+      key ready on the dashboard.
+    </div>
+    {% else %}
+    <div class="tutorial-beta-banner" role="note">
+      <strong>Private beta</strong> — access is gated. Email
+      <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a>
+      with a brief note on how you'd like to use it; we review requests
+      individually. If it's a fit, you'll get an invite link, with your API key
+      ready on the dashboard.
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="tutorial-authed-cta"><a href="/dashboard">Go to Dashboard →</a></p>
+    {% endif %}
+
+    {% block docs_main %}{% endblock %}
+  </article>
+
+  <aside class="docs-toc" aria-label="On this page">
+    {% include "_tutorial_toc.html" %}
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+<script>
+  (function () {
+    function ready(fn) {
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+      else fn();
+    }
+    ready(function () {
+      // Syntax-highlight + copy buttons on every code block (lifted verbatim
+      // from the legacy single-page tutorial.html; the selector is the only
+      // thing that changed — .tutorial-body → .docs-content).
+      var blocks = document.querySelectorAll('.docs-content pre');
+      Array.prototype.forEach.call(blocks, function (pre) {
+        var code = pre.querySelector('code');
+        if (window.hljs && code) {
+          try { window.hljs.highlightElement(code); } catch (e) {}
+        }
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'copy-btn';
+        btn.textContent = 'Copy';
+        btn.setAttribute('aria-label', 'Copy code to clipboard');
+        btn.addEventListener('click', function () {
+          var text = (code || pre).innerText;
+          if (!navigator.clipboard) { btn.textContent = 'Press ⌘C'; return; }
+          navigator.clipboard.writeText(text).then(function () {
+            btn.textContent = 'Copied';
+            btn.classList.add('copied');
+            setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+          }).catch(function () { btn.textContent = 'Press ⌘C'; });
+        });
+        pre.appendChild(btn);
+      });
+
+      // Right-rail "On this page": highlight the heading the reader is
+      // currently in. IntersectionObserver-based — pure progressive
+      // enhancement, the TOC still works (as plain anchor links) without JS.
+      //
+      // ACS-142: the old version cleared all .active classes on every
+      // intersecting entry and set the LAST one in the batch — so when two
+      // headings crossed the active band in the same observer tick (very
+      // common right after a TOC click), the wrong link won the race. The
+      // new rule tracks the set of currently-visible headings and picks the
+      // topmost in document order; when none are visible (mid-section, or
+      // past the bottom heading) it falls back to the last heading whose top
+      // edge is above the active band.
+      var headings = document.querySelectorAll('.docs-content h2[id], .docs-content h3[id]');
+      var headingList = Array.prototype.slice.call(headings);
+      var tocLinks = {};
+      Array.prototype.forEach.call(document.querySelectorAll('.docs-toc a'), function (a) {
+        var href = a.getAttribute('href') || '';
+        var hash = href.indexOf('#');
+        if (hash >= 0) tocLinks[href.slice(hash + 1)] = a;
+      });
+      if (headingList.length && 'IntersectionObserver' in window) {
+        var visible = Object.create(null);
+        var applyActive = function () {
+          var activeId = null;
+          for (var i = 0; i < headingList.length; i++) {
+            if (visible[headingList[i].id]) { activeId = headingList[i].id; break; }
+          }
+          if (!activeId) {
+            // Matches the IO rootMargin below: active band is the top 35%
+            // of the viewport.
+            var fold = window.innerHeight * 0.35;
+            for (var j = 0; j < headingList.length; j++) {
+              if (headingList[j].getBoundingClientRect().top <= fold) activeId = headingList[j].id;
+            }
+          }
+          Object.keys(tocLinks).forEach(function (k) { tocLinks[k].classList.remove('active'); });
+          if (activeId && tocLinks[activeId]) tocLinks[activeId].classList.add('active');
+        };
+        var observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (e) {
+            if (e.isIntersecting) visible[e.target.id] = true;
+            else delete visible[e.target.id];
+          });
+          applyActive();
+        }, { rootMargin: '0px 0px -65% 0px', threshold: 0 });
+        headingList.forEach(function (h) { observer.observe(h); });
+        applyActive();  // initial paint, before the first observer batch
+      }
+    });
+  })();
+</script>
+{% endblock %}

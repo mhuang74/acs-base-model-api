@@ -1,0 +1,893 @@
+{% extends "base.html" %}
+{% block title %}Users — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .approve-btn, .reject-btn {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.85rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+  }
+  .approve-btn { background: var(--success); border-color: var(--success); }
+  .approve-btn:hover { background: #25553a; border-color: #25553a; }
+  .reject-btn { background: var(--error); border-color: var(--error); }
+  .reject-btn:hover { background: #91201a; border-color: #91201a; }
+  .pending-actions { display: flex; gap: 0.4rem; }
+  .pending-actions form { margin: 0; }
+  .status-pending { background: var(--warn-bg); color: var(--accent-2); border-color: var(--warn-border); }
+  /* The roster's email cell is the way into a person's page — style it as a
+     link (a bare <code> inside <a> inherited code styling and read as plain
+     text). Mono keeps the column scannable. */
+  .user-link { font-family: var(--font-mono); font-size: 0.9em; text-decoration: underline; text-underline-offset: 2px; }
+  .status-approved { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  /* Engagement buckets (ACS-300) — same thresholds as Metabase C1. */
+  .pill.eng-active { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .pill.eng-cooling { background: var(--warn-bg); color: var(--accent-2); border-color: var(--warn-border); }
+  .pill.eng-churned { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  .pill.eng-never_activated { color: var(--muted); }
+  .status-rejected { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  /* base.html styles every <form> as a 420px-wide flex column (it assumes a
+     login/settings form). #bulk-form wraps the whole roster table, so without
+     this the table is clipped to 420px with a horizontal scrollbar on desktop
+     — and looks fine on mobile, where the 768px media query relaxes max-width.
+     Same escape hatch the notes/budget forms already use. */
+  #bulk-form { display: block; max-width: none; }
+  .col-select { width: 1.8rem; }
+
+  /* Tags (ACS-371). */
+  .tag-chip { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-soft);
+              border-radius: 999px; padding: 0.05rem 0.45rem; font-size: 0.75rem; white-space: nowrap; }
+  .row-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
+  /* Filters — ONE row. base.html styles every <form> as a 420px flex COLUMN
+     (it assumes a login form); `.filter-bar` previously set display:flex but
+     never overrode flex-direction or max-width, so the two selects stacked and
+     the bar sat in a narrow centred strip. Both must be reset explicitly. */
+  .filter-bar {
+    display: flex; flex-direction: row; max-width: none;
+    gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.9rem;
+  }
+  /* Label text sits INLINE with its control, so the whole bar is one line. */
+  .filter-bar label {
+    flex-direction: row; align-items: center; gap: 0.4rem;
+    margin: 0; font-size: 0.85rem; white-space: nowrap;
+  }
+  .filter-bar select { min-width: 9rem; }
+  .filter-clear { font-size: 0.85rem; color: var(--muted); }
+
+  /* Bulk actions (ACS-372). Hidden until something is selected so the roster
+     reads normally at rest. */
+  .bulk-bar { display: none; gap: 0.75rem; align-items: center; flex-wrap: wrap;
+              background: var(--surface-alt); border: 1px solid var(--border);
+              border-radius: var(--radius-lg); padding: 0.7rem 0.9rem; margin-bottom: 0.9rem; }
+  .bulk-bar.open { display: flex; }
+  .bulk-count { font-weight: 600; white-space: nowrap; }
+  .bulk-count b { font-variant-numeric: tabular-nums; }
+  .bulk-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+
+  /* An input welded to the button(s) that act on it, so "Add tag" can't read as
+     a sibling of "Suspend" — the control and its verb are one unit. */
+  .ctl-group { display: flex; align-items: stretch; }
+  .ctl-group > input { margin: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .ctl-group > button { margin-left: -1px; border-radius: 0; white-space: nowrap; }
+  .ctl-group > button:last-child { border-top-right-radius: var(--radius); border-bottom-right-radius: var(--radius); }
+  /* The welded button paints over the input's right edge, clipping its focus
+     ring; lift the focused input above it. */
+  .ctl-group > input:focus { position: relative; z-index: 1; }
+  .ctl-group > input[type=text] { width: 12rem; }
+  .ctl-group > input[type=number] { width: 8rem; }
+  /* The budget input, its Set button and the "also each live key" modifier are
+     ONE flex item, so the checkbox can never wrap away from the control it
+     modifies (a negative margin doesn't survive a wrap; this does). */
+  .ctl-pair { display: flex; align-items: center; gap: 0.45rem; }
+  .bulk-check { display: flex; flex-direction: row; align-items: center; gap: 0.35rem;
+                margin: 0; font-size: 0.82rem; font-weight: 400; color: var(--muted);
+                white-space: nowrap; }
+  /* Pushed to the right of whatever row it lands on, without forcing a break. */
+  #bulk-delete-open { margin-left: auto; }
+
+  /* Delete is a two-step action: this button only REVEALS the confirmation
+     block, which is why the bar stays compact at rest. */
+  .bulk-danger { flex-basis: 100%; border-top: 1px dashed var(--error-border);
+                 margin-top: 0.4rem; padding-top: 0.7rem; }
+  /* Redundant against the UA sheet, kept deliberately: .bulk-danger used to
+     declare display:flex, and re-adding any display here would silently
+     defeat the `hidden` attribute that makes delete a two-step action. */
+  .bulk-danger[hidden] { display: none; }
+  .bulk-danger .hint { font-size: 0.82rem; color: var(--muted); margin: 0 0 0.5rem; }
+  .bulk-danger code { background: var(--error-bg); color: var(--error); padding: 0.05rem 0.3rem; border-radius: 4px; }
+  .bulk-danger-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .bulk-danger-row input[type=text] { width: 19rem; margin: 0; }
+
+  /* Suspended is dormant, not a verdict (ACS-353) — neutral like .pill.paused. */
+  .status-suspended { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .role-admin { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-soft); padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.78rem; }
+
+  .stats-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .stat-card {
+    flex: 1 1 7rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.9rem 1.1rem;
+    box-shadow: var(--shadow);
+  }
+  .stat-card .stat-num { font-size: 1.5rem; font-weight: 600; font-family: var(--font-serif); color: var(--fg); }
+  .stat-card .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .invite-panel { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; background: var(--surface); margin-bottom: 2rem; }
+  .invite-panel h3 { margin: 0 0 0.75rem; }
+  .invite-forms { display: flex; gap: 2rem; flex-wrap: wrap; align-items: flex-start; }
+  .invite-form-col { flex: 1 1 280px; }
+  .invite-form-wide { flex: 1 1 100%; border-top: 1px solid var(--border); padding-top: 1rem; }
+  .invite-form-col form { max-width: 100%; }
+  .invite-divider { border: 0; border-left: 1px solid var(--border); align-self: stretch; }
+  .invite-link-box {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    word-break: break-all;
+    margin-top: 0.5rem;
+  }
+
+  .invite-status-pending  { background: var(--warn-bg);     color: var(--accent-2); border-color: var(--warn-border); }
+  .invite-status-accepted { background: var(--success-bg);  color: var(--success);  border-color: var(--success-border); }
+  .invite-status-used     { background: var(--surface-alt); color: var(--muted);    border-color: var(--border); }
+  .invite-status-expired  { background: var(--surface-alt); color: var(--muted);    border-color: var(--border); }
+  .invite-status-revoked  { background: var(--error-bg);    color: var(--error);    border-color: var(--error-border); }
+
+  .invite-uses { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .invite-accounts { font-size: 0.82rem; }
+  .invite-accounts summary { cursor: pointer; color: var(--accent); }
+  .invite-accounts ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+  .invite-accounts li { font-family: var(--font-mono); font-size: 0.78rem; word-break: break-all; }
+
+  /* Pending signups: keep name/org + applied compact so the revealed
+     application details (esp. the free-text use-case) get the room. */
+  .pending-table th.col-nameorg,
+  .pending-table td.col-nameorg { width: 11rem; }
+  .pending-table th.col-applied,
+  .pending-table td.col-applied { width: 8.5rem; white-space: nowrap; }
+
+  /* The expandable detail row sits directly under its request row; drop the
+     divider between them so the two read as one grouped unit, and let the
+     detail row's own bottom border separate one request from the next. */
+  .pending-table tr.pending-main > td { border-bottom: 0; }
+  .pending-detail-row > td { padding-top: 0.25rem; }
+  .pending-table tbody tr:hover,
+  .pending-detail-row:hover { background: transparent; }
+
+  .signup-details { font-size: 0.9rem; }
+  .signup-details > summary { padding: 0.5rem 0.75rem; font-weight: 500; font-size: 0.85rem; }
+  .signup-details .details-body { padding: 0.85rem 1rem; }
+
+  .signup-use-case-label {
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+  }
+  /* Preserve the applicant's line breaks, wrap long words, and cap very long
+     answers (up to ~2000 chars) with an inner scroll rather than a giant cell. */
+  .signup-use-case {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 18rem;
+    overflow-y: auto;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.8rem;
+    color: var(--fg);
+    line-height: 1.5;
+  }
+  .signup-meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1.25rem;
+    margin: 0.85rem 0 0;
+    font-size: 0.88rem;
+  }
+  .signup-meta dt { color: var(--muted); font-weight: 500; }
+  .signup-meta dd { margin: 0; color: var(--fg); overflow-wrap: anywhere; }
+
+  @media (max-width: 760px) {
+    .invite-forms { flex-direction: column; }
+    .invite-divider { display: none; }
+    .pending-actions { flex-wrap: wrap; }
+  }
+
+  /* Welding the inputs to their buttons removed the escape valve the old layout
+     had (five buttons in a wrapping row, each input alone in a label).
+     .ctl-group/.ctl-pair are nowrap flex items whose fixed-width inputs and
+     nowrap buttons set a hard min-content floor, so on a narrow phone they
+     overflow the container. Let them take a full line and let the input shrink.
+
+     Placed at the END of the sheet deliberately: these override the base
+     .ctl-group rules at equal specificity, so they only win by being later.
+     The `flex-basis: 0` is what actually does the work — `width: auto` on an
+     <input> falls back to its intrinsic `size` (~192px), leaving nothing to
+     shrink, and a zero basis makes the width declaration irrelevant instead. */
+  @media (max-width: 560px) {
+    .ctl-group { flex: 1 1 100%; min-width: 0; }
+    .ctl-group > input[type=text],
+    .ctl-group > input[type=number] { flex: 1 1 0%; min-width: 0; width: auto; }
+    .ctl-pair { flex-wrap: wrap; flex: 1 1 100%; }
+    #bulk-delete-open { margin-left: 0; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Users</h1>
+<p class="lead" style="margin-bottom: 2rem;">Manage signups, approve or reject applicants, and invite people directly.</p>
+
+{% if flash_message %}
+  <p class="pill status-approved" style="display:inline-block;">{{ flash_message }}</p>
+{% endif %}
+{% if flash_error %}
+  <p class="pill status-rejected" style="display:inline-block;">{{ flash_error }}</p>
+{% endif %}
+
+{# ---- invite link (shown after creation) ---- #}
+{% if new_invite_url %}
+<section>
+  <div class="invite-panel" style="border-color: var(--success-border); background: var(--success-bg);">
+    <h3 style="color: var(--success);">Invite link created</h3>
+    <p style="color: var(--success); margin-bottom: 0.5rem;">
+      Copy and share this link. You can also find it again in the Invite tokens table below.
+    </p>
+    <div class="invite-link-box" id="invite-link-value">{{ new_invite_url }}</div>
+    <button type="button" class="secondary small" style="margin-top: 0.5rem;"
+            onclick="navigator.clipboard.writeText(document.getElementById('invite-link-value').textContent)">
+      Copy link
+    </button>
+  </div>
+</section>
+{% endif %}
+
+{# ---- stats ---- #}
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-num">{{ stats.total_users }}</div>
+    <div class="stat-label">Total users</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num">{{ stats.pending_signups }}</div>
+    <div class="stat-label">Pending signups</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num">{{ stats.pending_invites }}</div>
+    <div class="stat-label">Open invites</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num">{{ stats.accepted_invites }}</div>
+    <div class="stat-label">Accepted invites</div>
+  </div>
+</div>
+
+{# ---- invite creation panel ---- #}
+<section>
+  <h2>Invite someone</h2>
+  <div class="invite-panel">
+      <datalist id="invite-known-tags">
+      {% for t, n in all_tags %}<option value="{{ t }}">{{ n }} account{{ '' if n == 1 else 's' }}</option>{% endfor %}
+    </datalist>
+    <div class="invite-forms">
+      {# Left: generate a link-only invite #}
+      <div class="invite-form-col">
+        <h3 style="margin-top: 0;">Generate an invite link</h3>
+        <p class="muted" style="margin-bottom: 0.75rem; font-size: 0.9rem;">
+          Creates a shareable link you can pass around manually. Any email can be used at signup.
+          Pick how many accounts the link may create.
+        </p>
+        <form action="/admin/users/invite" method="post">
+          {# Carry the roster sort across the POST so creating an invite does not
+             reset the ordering (ACS-371). Deliberately NOT status/tag — a filtered
+             re-render could hide the invite you just made. #}
+          {% if active_sort %}<input type="hidden" name="sort" value="{{ active_sort }}">{% endif %}
+          <input type="hidden" name="invite_type" value="link">
+          <label>How many accounts can this link create?
+            <select name="max_uses">
+              <option value="1">1 (single-use)</option>
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="unlimited">Unlimited</option>
+            </select>
+          </label>
+          <label>Tag <span class="muted" style="font-weight:400;">(optional)</span>
+            <span class="muted" style="display:block; font-size:0.8rem;">Applied automatically to every account created from this link, so the cohort is identifiable without tagging anyone by hand later.</span>
+            <input type="text" name="tag" maxlength="32" list="invite-known-tags" placeholder="e.g. hiring-2026-08">
+          </label>
+          <button type="submit" style="margin-top: 0.5rem;">Generate link</button>
+        </form>
+      </div>
+
+      <div class="invite-divider"></div>
+
+      {# Right: invite by email(s) #}
+      <div class="invite-form-col">
+        <h3 style="margin-top: 0;">Invite by email</h3>
+        <p class="muted" style="margin-bottom: 0.75rem; font-size: 0.9rem;">
+          Enter one email per line (or comma/space-separated). Each gets a personal, single-use
+          invite link addressed to them. For a shareable multi-use link, use the generator on the left.
+        </p>
+        <form action="/admin/users/invite" method="post">
+          {# Carry the roster sort across the POST so creating an invite does not
+             reset the ordering (ACS-371). Deliberately NOT status/tag — a filtered
+             re-render could hide the invite you just made. #}
+          {% if active_sort %}<input type="hidden" name="sort" value="{{ active_sort }}">{% endif %}
+          <input type="hidden" name="invite_type" value="email">
+          <label>Email address(es)
+            <textarea name="emails" rows="4" required placeholder="alice@example.com&#10;bob@example.com"></textarea>
+          </label>
+          <label>Tag <span class="muted" style="font-weight:400;">(optional)</span>
+            <span class="muted" style="display:block; font-size:0.8rem;">Applied automatically to every account created from these invites, so the cohort is identifiable without tagging anyone by hand later.</span>
+            <input type="text" name="tag" maxlength="32" list="invite-known-tags" placeholder="e.g. hiring-2026-08">
+          </label>
+          <button type="submit">Send invites</button>
+        </form>
+      </div>
+
+      {# Full width: CSV beta outreach #}
+      <div class="invite-form-wide">
+        <h3 style="margin-top: 0;">Send personalized beta invites from CSV</h3>
+        <p class="muted" style="margin-bottom: 0.75rem; font-size: 0.9rem;">
+          Upload a UTF-8 CSV with <code>email</code> and optional <code>name</code>.
+          Add <code>source</code>, <code>cohort</code>, <code>survey_status</code>,
+          or <code>survey_respondent</code> to use the survey-response wording.
+          Each valid row gets one personal, single-use invite link in one combined email.
+        </p>
+        <form action="/admin/users/invite" method="post" enctype="multipart/form-data">
+          {# Carry the roster sort across the POST so creating an invite does not
+             reset the ordering (ACS-371). Deliberately NOT status/tag — a filtered
+             re-render could hide the invite you just made. #}
+          {% if active_sort %}<input type="hidden" name="sort" value="{{ active_sort }}">{% endif %}
+          <input type="hidden" name="invite_type" value="csv_personalized">
+          <label>CSV file
+            <input type="file" name="csv_file" accept=".csv,text/csv" required>
+          </label>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
+            <label>Discord invite URL
+              <span class="muted" style="display:block; font-size:0.8rem;">Use the <strong>role-granting</strong> invite (auto-assigns Member) — these recipients are known/vetted.</span>
+              <input type="url" name="discord_url" value="{{ beta_discord_url or '' }}" required>
+            </label>
+            <label>Optional survey URL
+              <input type="url" name="survey_url" value="https://forms.example/survey">
+            </label>
+          </div>
+          <label>Tag <span class="muted" style="font-weight:400;">(optional)</span>
+            <span class="muted" style="display:block; font-size:0.8rem;">Applied automatically to every account created from these invites, so the cohort is identifiable without tagging anyone by hand later.</span>
+            <input type="text" name="tag" maxlength="32" list="invite-known-tags" placeholder="e.g. hiring-2026-08">
+          </label>
+          <button type="submit" style="margin-top: 0.5rem;">Send personalized invites</button>
+        </form>
+        {% if csv_parse_errors %}
+        <div style="margin-top: 0.75rem;">
+          {% for err in csv_parse_errors %}
+            <p class="error" style="font-size: 0.88rem; padding: 0.4rem 0.75rem; margin-bottom: 0.3rem;">
+              {{ err }}
+            </p>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% if invite_results %}
+    <div style="margin-top: 1rem;">
+      {% for r in invite_results %}
+        {% if r.ok %}
+          <p class="success" style="font-size: 0.88rem; padding: 0.4rem 0.75rem; margin-bottom: 0.3rem;">
+            ✓ {{ r.email }} — invite sent
+          </p>
+        {% else %}
+          <p class="error" style="font-size: 0.88rem; padding: 0.4rem 0.75rem; margin-bottom: 0.3rem;">
+            ✗ {{ r.email }} — {{ r.error }}
+          </p>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+{# ---- pending signups (existing self-service flow) ---- #}
+<section>
+  <h2>Pending signup requests <span class="muted">({{ pending|length }})</span></h2>
+  {% if pending %}
+  <p class="muted" style="margin-top: -0.5rem; font-size: 0.9rem;">
+    Expand a request to read the applicant's full answer to
+    &ldquo;How do you want to use this?&rdquo; and the rest of their signup details.
+  </p>
+  <div class="table-wrap">
+    <table class="pending-table">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th class="col-nameorg">Name / Org</th>
+          <th class="col-applied">Applied</th>
+          <th style="width: 280px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in pending %}
+        <tr class="pending-main">
+          <td><code>{{ u.email }}</code></td>
+          <td class="col-nameorg">
+            {{ u.name or "—" }}
+            {% if u.org %}<span class="muted">({{ u.org }})</span>{% endif %}
+            {# Roles survive rejection, so a reopened row can be non-user —
+               never approve one of those without seeing it. #}
+            {% if u.role != 'user' %}<span class="role-admin">{{ u.role }}</span>{% endif %}
+          </td>
+          {# agreed_terms_at is re-stamped on a re-application, so it dates the
+             submission actually under review (created_at is the first one). #}
+          <td class="muted col-applied">
+            {{ (u.agreed_terms_at or u.created_at).strftime('%Y-%m-%d %H:%M') }}
+            {% if u.agreed_terms_at and (u.agreed_terms_at - u.created_at).total_seconds() > 60 %}
+              <span class="pill" title="Re-application — earlier answers are in Notes">re-applied</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="pending-actions">
+              <form action="/admin/users/{{ u.id }}/approve" method="post"
+                    data-confirm="Approve {{ u.email }}? This creates an API key and emails them."
+                    data-confirm-danger="false" data-confirm-label="Approve"
+                    style="display: flex; gap: 0.4rem; align-items: center;">
+                <input type="text" name="approval_reason" maxlength="2000"
+                       placeholder="Why? (→ notes)"
+                       style="width: 10rem; font-size: 0.85rem;">
+                <button type="submit" class="approve-btn" title="Approve" aria-label="Approve">✓</button>
+              </form>
+              <form action="/admin/users/{{ u.id }}/reject" method="post"
+                    data-confirm="Reject {{ u.email }}? They will be emailed."
+                    data-confirm-label="Reject">
+                <button type="submit" class="reject-btn" title="Reject" aria-label="Reject">✕</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        <tr class="pending-detail-row">
+          <td colspan="4">
+            <details class="signup-details">
+              <summary>Application details</summary>
+              <div class="details-body">
+                <span class="signup-use-case-label">Planned usage</span>
+                {% if u.signup_use_case %}
+                  <div class="signup-use-case">{{ u.signup_use_case }}</div>
+                {% else %}
+                  <div class="muted">No answer provided (invited / admin-created account).</div>
+                {% endif %}
+                {# Optional answers are rendered even when blank: "they skipped
+                   the strongly-encouraged Prior work question" is signal for the
+                   approve/decline call, and hiding the row makes it look like we
+                   never asked. Only for public-signup accounts — invitees were
+                   never shown these questions. #}
+                {% if u.signup_use_case %}
+                  <span class="signup-use-case-label" style="margin-top: 0.75rem;">Results</span>
+                  {% if u.signup_outcome %}
+                    <div class="signup-use-case">{{ u.signup_outcome }}</div>
+                  {% else %}
+                    <div class="muted">— not provided</div>
+                  {% endif %}
+                  <span class="signup-use-case-label" style="margin-top: 0.75rem;">Prior work</span>
+                  {% if u.signup_prior_work %}
+                    <div class="signup-use-case">{{ u.signup_prior_work | urlize(target="_blank") }}</div>
+                  {% else %}
+                    <div class="muted">— not provided</div>
+                  {% endif %}
+                  <span class="signup-use-case-label" style="margin-top: 0.75rem;">How did they hear about us?</span>
+                  {% if u.signup_referral %}
+                    <div class="signup-use-case">{{ u.signup_referral }}</div>
+                  {% else %}
+                    <div class="muted">— not provided</div>
+                  {% endif %}
+                {% endif %}
+                <dl class="signup-meta">
+                  <dt>Email</dt><dd><code>{{ u.email }}</code></dd>
+                  <dt>Name</dt><dd>{{ u.name or "—" }}</dd>
+                  <dt>Organization</dt><dd>{{ u.org or "—" }}</dd>
+                  <dt>Profile link</dt>
+                  {# "not provided" only for people who were actually asked;
+                     invitees keep the neutral dash (matches the detail page). #}
+                  <dd>{% if u.signup_profile_link %}{{ u.signup_profile_link | urlize(target="_blank") }}{% elif u.signup_use_case %}<span class="muted">— not provided</span>{% else %}—{% endif %}</dd>
+                  <dt>Source</dt><dd>{{ u.signup_source or "—" }}</dd>
+                  <dt>Agreed to usage rules</dt>
+                  <dd>{% if u.agreed_terms_at %}{{ u.agreed_terms_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</dd>
+                  <dt>Applied</dt><dd>{{ u.created_at.strftime('%Y-%m-%d %H:%M') }}</dd>
+                </dl>
+              </div>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No pending requests.</p>
+  {% endif %}
+</section>
+
+{# ---- outstanding invites ---- #}
+{# Actionable invites up front; expired/used/revoked collapsed (ACS-303). #}
+{% set active_invites = invites | selectattr("status", "in", ["pending", "accepted"]) | list %}
+{% set inactive_invites = invites | rejectattr("status", "in", ["pending", "accepted"]) | list %}
+{% macro invite_table(rows) %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Created</th>
+          <th>Expires</th>
+          <th>Uses</th>
+          <th>Status</th>
+          <th>Created accounts</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {# Still claimable while pending or partly-used (accepted with capacity left). #}
+        {% set claimable = row.status in ('pending', 'accepted') %}
+        <tr>
+          <td>
+            {% if row.invite.email %}
+              <code>{{ row.invite.email }}</code>
+            {% else %}
+              <span class="muted">link-only</span>
+            {% endif %}
+          </td>
+          <td class="muted" style="white-space: nowrap;">{{ row.invite.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="muted" style="white-space: nowrap;">{{ row.invite.expires_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="invite-uses">
+            {% if row.max_uses is none %}
+              {{ row.redemption_count }} / <span title="Unlimited">∞</span>
+            {% else %}
+              {{ row.redemption_count }} / {{ row.max_uses }}
+            {% endif %}
+          </td>
+          <td>
+            <span class="pill invite-status-{{ row.status }}">{{ row.status }}</span>
+          </td>
+          <td>
+            {% if row.created_emails %}
+              {% if row.created_emails|length == 1 %}
+                <span class="muted" style="font-size: 0.82rem; font-family: var(--font-mono);">{{ row.created_emails[0] }}</span>
+              {% else %}
+                <details class="invite-accounts">
+                  <summary>{{ row.created_emails|length }} accounts</summary>
+                  <ul>
+                    {% for em in row.created_emails %}
+                      <li>{{ em }}</li>
+                    {% endfor %}
+                  </ul>
+                </details>
+              {% endif %}
+            {% else %}
+              <span class="muted" style="font-size: 0.82rem;">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if claimable %}
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <div class="invite-link-box" style="flex: 1; font-size: 0.75rem; padding: 0.3rem 0.5rem; max-width: 28rem;"
+                   id="inv-{{ row.invite.id }}">{{ row.invite_url }}</div>
+              <button type="button" class="secondary small"
+                      onclick="navigator.clipboard.writeText(document.getElementById('inv-{{ row.invite.id }}').textContent)">
+                Copy
+              </button>
+              <form action="/admin/invites/{{ row.invite.id }}/revoke" method="post"
+                    data-confirm="Revoke this invite? The link will stop working immediately."
+                    data-confirm-label="Revoke invite"
+                    style="margin: 0; display: inline;">
+                <button type="submit" class="reject-btn small">Revoke</button>
+              </form>
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}
+<section>
+  <h2>Invite tokens <span class="muted">({{ active_invites|length }} active)</span></h2>
+  {% if active_invites %}
+  {{ invite_table(active_invites) }}
+  {% else %}
+  <p class="muted">No active invite tokens.</p>
+  {% endif %}
+  {% if inactive_invites %}
+  <details style="margin-top: 0.75rem;">
+    <summary class="muted" style="cursor: pointer;">Show {{ inactive_invites|length }} inactive (expired / used / revoked)</summary>
+    {{ invite_table(inactive_invites) }}
+  </details>
+  {% endif %}
+</section>
+
+{# ---- all users ---- #}
+<section>
+  <h2>All users
+    <span class="muted">
+      {%- if showing_filtered %}({{ shown_count }} of {{ stats.total_users }})
+      {%- else %}({{ stats.total_users }}){% endif %}
+    </span>
+  </h2>
+  {# Filters (ACS-371). Plain GET so a filtered roster is a shareable URL and
+     the browser Back button behaves. Submitting resets ?sort= deliberately —
+     the two are independent and carrying a stale sort here surprised us more
+     than losing it. #}
+  <form method="get" action="/admin/users" class="filter-bar">
+    <label>Status
+      <select name="status">
+        <option value="">any</option>
+        {% for st in user_statuses %}
+        <option value="{{ st }}" {% if active_status == st %}selected{% endif %}>{{ st }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Tag
+      <select name="tag">
+        <option value="">any</option>
+        {% for t, n in all_tags %}
+        <option value="{{ t }}" {% if active_tag == t %}selected{% endif %}>{{ t }} ({{ n }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="secondary small">Filter</button>
+    {% if showing_filtered %}<a href="/admin/users" class="filter-clear">clear</a>{% endif %}
+  </form>
+  <form id="bulk-form" method="post" action="/admin/users/bulk">
+    <input type="hidden" name="action" id="bulk-action">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <div class="bulk-bar" id="bulk-bar">
+      <span class="bulk-count"><b id="bulk-n">0</b> selected</span>
+
+      <div class="bulk-actions">
+        <button type="button" class="secondary small" data-bulk="suspend">Suspend</button>
+        <button type="button" class="secondary small" data-bulk="unsuspend">Unsuspend</button>
+      </div>
+
+      {# Each input is welded to the buttons that act on it (.ctl-group), so
+         "Add" reads as belonging to the tag box rather than as one more verb
+         in a row of unrelated buttons. #}
+      <div class="ctl-group">
+        <input type="text" name="tag" list="invite-known-tags"
+               placeholder="e.g. hiring-2026-08" aria-label="Tag to add or remove">
+        <button type="button" class="secondary small" data-bulk="tag_add">Add</button>
+        <button type="button" class="secondary small" data-bulk="tag_remove">Remove</button>
+      </div>
+
+      <div class="ctl-pair">
+        <div class="ctl-group">
+          <input type="number" name="budget" min="0"
+                 placeholder="blank = ∞" aria-label="Monthly token budget">
+          <button type="button" class="secondary small" data-bulk="set_budget">Set</button>
+        </div>
+        <label class="bulk-check">
+          <input type="checkbox" name="also_per_key" value="1"> also each live key
+        </label>
+      </div>
+
+      <button type="button" class="danger small" id="bulk-delete-open"
+              aria-expanded="false" aria-controls="bulk-danger">Delete…</button>
+
+      {# Step two. Hidden until "Delete…" is clicked, so the bar stays compact
+         at rest and deleting is a deliberate multi-step action. #}
+      <div class="bulk-danger" id="bulk-danger" hidden>
+        <p class="hint">
+          Deleting is permanent and takes each account's usage history with it
+          (requests, usage totals, harvest jobs, workbench sessions and looms).
+          Restoring from a database backup is whole-database disaster recovery,
+          not a per-row undo. To confirm, type
+          <code id="bulk-phrase">Permanently delete 0 users</code>.
+        </p>
+        <div class="bulk-danger-row">
+          {# aria-describedby points at the phrase itself: focus jumps straight
+             here on reveal, so without it a screen-reader user never meets the
+             text saying WHAT to type. #}
+          <input type="text" name="confirm_phrase" id="bulk-confirm" autocomplete="off"
+                 placeholder="type the phrase to enable" aria-label="Confirmation phrase"
+                 aria-describedby="bulk-phrase">
+          <button type="button" class="danger small" data-bulk="delete" id="bulk-delete" disabled>Delete permanently</button>
+          <button type="button" class="ghost small" id="bulk-delete-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="col-select"><input type="checkbox" id="bulk-all" title="Select all shown" aria-label="Select all shown"></th>
+          <th>Email</th>
+          <th>Org</th>
+          <th>Status</th>
+          <th>Role</th>
+          <th title="Discord linked via Connect Discord (ACS-269)">Discord</th>
+          {# Engagement columns (ACS-300) — headers link to a server-side sort. #}
+          <th><a href="/admin/users?sort=bucket{% if active_status %}&amp;status={{ active_status }}{% endif %}{% if active_tag %}&amp;tag={{ active_tag }}{% endif %}">Engagement</a></th>
+          <th style="text-align:right;"><a href="/admin/users?sort=last_seen{% if active_status %}&amp;status={{ active_status }}{% endif %}{% if active_tag %}&amp;tag={{ active_tag }}{% endif %}">Last seen</a></th>
+          <th style="text-align:right;"><a href="/admin/users?sort=tokens{% if active_status %}&amp;status={{ active_status }}{% endif %}{% if active_tag %}&amp;tag={{ active_tag }}{% endif %}">Tokens (30d)</a></th>
+          <th style="text-align:right;"><a href="/admin/users?sort=weeks{% if active_status %}&amp;status={{ active_status }}{% endif %}{% if active_tag %}&amp;tag={{ active_tag }}{% endif %}">Weeks</a></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in users %}
+        <tr>
+          <td class="col-select">
+            {# No checkbox for your own account: every bulk action here would
+               either lock you out or is refused server-side anyway. #}
+            {% if row.user.id != user.id %}
+            <input type="checkbox" class="bulk-pick" name="user_ids" value="{{ row.user.id }}"
+                   aria-label="Select {{ row.user.email }}">
+            {% endif %}
+          </td>
+          {# Email links to the person page; the old Detail/Delete actions column
+             is gone (ACS-303) — deleting lives only in the detail Danger zone. #}
+          <td>
+            <a class="user-link" href="/admin/users/{{ row.user.id }}">{{ row.user.email }}</a>
+            {% if row.tags %}<div class="row-tags">{% for t in row.tags %}<span class="tag-chip"{% if t == 'internal' %} title="Internal team account — excluded from the Metabase C tiles"{% endif %}>{{ t }}</span>{% endfor %}</div>{% endif %}
+          </td>
+          <td>{{ row.user.org or "—" }}</td>
+          <td><span class="pill status-{{ row.user.status }}">{{ row.user.status }}</span></td>
+          <td>
+            {% if row.user.role == 'admin' %}
+              <span class="role-admin">admin</span>
+            {% else %}
+              <span class="muted">{{ row.user.role }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.user.discord_username %}
+              {% if row.user.discord_guild_joined is false %}
+                <span title="{{ row.user.discord_username }} — linked, but not added to the server">⚠</span>
+              {% else %}
+                <span title="{{ row.user.discord_username }}">✓</span>
+              {% endif %}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          {% set eng = row.eng %}
+          <td>
+            {% if eng %}<span class="pill eng-{{ eng.engagement }}">{{ eng.engagement | replace('_', ' ') }}</span>{% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if eng and eng.days_since_last is not none %}{{ eng.days_since_last }}d ago{% else %}<span class="muted">never</span>{% endif %}
+          </td>
+          <td style="text-align:right;">{{ "{:,}".format(eng.tokens_30d if eng else 0) }}</td>
+          <td style="text-align:right;">{{ eng.active_weeks if eng else 0 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </form>
+</section>
+
+<script>
+/* Bulk actions (ACS-372).
+
+   The action buttons are type="button", not submitters, on purpose. The shared
+   confirm-modal wiring in base.html calls form.submit(), which bypasses the
+   clicked submit button's name/value — so a form with several <button name="action">
+   submitters would post with `action` missing. Writing the value into a hidden
+   input first sidesteps that entirely. */
+(function () {
+  var form = document.getElementById('bulk-form');
+  if (!form) return;
+  var bar = document.getElementById('bulk-bar');
+  var all = document.getElementById('bulk-all');
+  var actionField = document.getElementById('bulk-action');
+  var nEl = document.getElementById('bulk-n');
+  var phraseEl = document.getElementById('bulk-phrase');
+  var confirmEl = document.getElementById('bulk-confirm');
+  var deleteBtn = document.getElementById('bulk-delete');
+  var dangerEl = document.getElementById('bulk-danger');
+  var openDelete = document.getElementById('bulk-delete-open');
+  var cancelDelete = document.getElementById('bulk-delete-cancel');
+  var picks = function () { return Array.prototype.slice.call(form.querySelectorAll('.bulk-pick')); };
+
+  function phraseFor(n) {
+    return 'Permanently delete ' + n + ' user' + (n === 1 ? '' : 's');
+  }
+
+  function sync() {
+    var chosen = picks().filter(function (c) { return c.checked; });
+    var n = chosen.length;
+    nEl.textContent = String(n);
+    bar.classList.toggle('open', n > 0);
+    /* The required phrase names the count, so it changes as the selection does —
+       that is what stops a stale "I thought I had 2 selected" delete. */
+    phraseEl.textContent = phraseFor(n);
+    /* The required phrase names the count, so a phrase typed for the old
+       selection must not survive — but collapsing the whole block would also
+       cost the user their place. Clear the field and leave it open; the <code>
+       above it re-renders with the new count. */
+    if (!dangerEl.hidden) { confirmEl.value = ''; }
+    if (all) {
+      all.checked = n > 0 && n === picks().length;
+      all.indeterminate = n > 0 && n < picks().length;
+    }
+    validateDelete();
+  }
+
+  function validateDelete() {
+    var n = picks().filter(function (c) { return c.checked; }).length;
+    deleteBtn.disabled = !(n > 0 && confirmEl.value.trim() === phraseFor(n));
+  }
+
+  function closeDanger() {
+    /* Only steal focus back if it was inside the block we're hiding — this also
+       runs from sync() while the user is on a row checkbox. */
+    var hadFocus = dangerEl.contains(document.activeElement);
+    dangerEl.hidden = true;
+    openDelete.setAttribute('aria-expanded', 'false');
+    confirmEl.value = '';
+    validateDelete();
+    if (hadFocus) { openDelete.focus(); }
+  }
+
+  /* Step one only reveals step two — deleting is never one click. Changing the
+     selection collapses it again: the required phrase names the count, so a
+     half-typed phrase for a stale selection must not linger. */
+  openDelete.addEventListener('click', function () {
+    dangerEl.hidden = false;
+    openDelete.setAttribute('aria-expanded', 'true');
+    confirmEl.focus();
+  });
+  cancelDelete.addEventListener('click', closeDanger);
+
+  if (all) {
+    all.addEventListener('change', function () {
+      picks().forEach(function (c) { c.checked = all.checked; });
+      sync();
+    });
+  }
+  picks().forEach(function (c) { c.addEventListener('change', sync); });
+  confirmEl.addEventListener('input', validateDelete);
+
+  form.querySelectorAll('[data-bulk]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var action = btn.getAttribute('data-bulk');
+      var n = picks().filter(function (c) { return c.checked; }).length;
+      if (!n) return;
+      var danger = action === 'delete';
+      var msg;
+      if (danger) {
+        msg = 'Permanently delete ' + n + ' account' + (n === 1 ? '' : 's') + '? '
+            + 'This also destroys their usage history and cannot be undone from the app.';
+      } else {
+        var verb = {
+          suspend: 'Suspend', unsuspend: 'Restore access for',
+          tag_add: 'Add this tag to', tag_remove: 'Remove this tag from',
+          set_budget: 'Set the monthly budget on'
+        }[action] || action;
+        msg = verb + ' ' + n + ' account' + (n === 1 ? '' : 's') + '?';
+      }
+      window.acsConfirm({
+        message: msg,
+        danger: danger,
+        confirmLabel: danger ? 'Delete permanently' : 'Confirm',
+        onConfirm: function () {
+          actionField.value = action;
+          form.submit();
+        }
+      });
+    });
+  });
+
+  sync();
+})();
+</script>
+{% endblock %}

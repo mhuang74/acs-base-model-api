@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Admin access required — ACS Infra{% endblock %}
+{% block content %}
+<h1>Admin access required</h1>
+<p class="lead">
+  This page is restricted to ACS admins. Your account is signed in but doesn't have
+  the admin role.
+</p>
+<p>
+  If you think this is a mistake, email
+  <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a>.
+</p>
+<div class="button-row">
+  <a class="btn" href="/dashboard">Back to dashboard</a>
+  <a class="btn secondary" href="/">Home</a>
+</div>
+{% endblock %}

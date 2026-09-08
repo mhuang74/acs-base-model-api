@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Bulk email — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .back-link { display: inline-block; margin-bottom: 1rem; font-size: 0.85rem; }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.1rem 1.3rem;
+    box-shadow: var(--shadow);
+    margin-bottom: 2rem;
+  }
+  .panel h2 { margin-top: 0; font-size: 1.1rem; font-family: var(--font-serif); }
+  .email-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .email-table th, .email-table td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .email-table th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+  .email-table tr:hover td { background: var(--surface-alt); }
+  .st-draft { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .st-scheduled { background: var(--warning-bg, #fff7e0); color: var(--warning, #8a6d00); border-color: var(--border); }
+  .st-sending { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .st-sent { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .st-canceled { background: var(--surface-alt); color: var(--muted); border-color: var(--border); }
+  .flash-ok { color: var(--success); margin-bottom: 1rem; }
+  .flash-err { color: var(--error); margin-bottom: 1rem; }
+  .hint { font-size: 0.82rem; color: var(--muted); }
+</style>
+{% endblock %}
+{% block content %}
+<a class="back-link" href="/admin/emails">&larr; Email audit</a>
+<h1>Bulk email</h1>
+<p class="lead" style="margin-bottom: 2rem;">
+  Upload a CSV of ready-to-send emails, review and edit each one, then send now
+  or schedule. Every send is logged in the <a href="/admin/emails">email audit</a>
+  and carries a one-click unsubscribe link.
+</p>
+
+{% if flash_message %}<p class="flash-ok">{{ flash_message }}</p>{% endif %}
+{% if flash_error %}<p class="flash-err">{{ flash_error }}</p>{% endif %}
+
+<div class="panel">
+  <h2>New batch</h2>
+  <form method="post" action="/admin/emails/bulk/upload" enctype="multipart/form-data">
+    <p>
+      <input type="file" name="csv_file" accept=".csv,text/csv" required>
+      <input type="text" name="name" placeholder="Batch label (optional)" style="padding: 0.4rem 0.6rem;">
+      <button class="btn" type="submit">Upload as draft</button>
+    </p>
+    <p class="hint">
+      Columns: <code>to</code>, <code>subject</code>, and <code>html_body</code> or
+      <code>text_body</code> (required) · <code>from</code>, <code>cc</code>, <code>bcc</code>,
+      <code>reply_to</code> (optional). One recipient per row, pre-personalized —
+      nothing sends until you review the draft. <code>from</code> defaults to
+      <code>{{ default_from }}</code> and must stay on the same domain.
+    </p>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Batches</h2>
+  {% if batches %}
+  <table class="email-table">
+    <thead><tr><th>Created</th><th>Name</th><th>Status</th><th>Emails</th><th>Scheduled / sent</th></tr></thead>
+    <tbody>
+      {% for row in batches %}
+      {% set b = row.batch %}
+      <tr>
+        <td>{{ b.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td><a href="/admin/emails/bulk/{{ b.id }}">{{ b.name }}</a></td>
+        <td><span class="pill st-{{ b.status }}">{{ b.status }}</span></td>
+        <td>
+          {% for status, n in row.counts.items() %}{{ n }} {{ status }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </td>
+        <td>
+          {% if b.sent_at %}{{ b.sent_at.strftime('%Y-%m-%d %H:%M') }} UTC
+          {% elif b.scheduled_at %}{{ b.scheduled_at.strftime('%Y-%m-%d %H:%M') }} UTC
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No batches yet.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Update subscribers ({{ subscribers|length }})</h2>
+  <p class="hint">Addresses from the landing-page "subscribe to updates" field, newest first.</p>
+  {% if subscribers %}
+  <details>
+    <summary>Show as CSV rows (paste into a batch CSV's <code>to</code> column)</summary>
+    <textarea readonly rows="6" style="width: 100%; font-family: monospace; font-size: 0.82rem;">{% for s in subscribers %}{{ s.email }}
+{% endfor %}</textarea>
+  </details>
+  {% else %}
+  <p class="muted">No subscribers yet.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Unsubscribed ({{ optouts|length }})</h2>
+  <p class="hint">Opted out via the footer link. Suppressed from every bulk send (transactional email unaffected).</p>
+  {% if optouts %}
+  <table class="email-table">
+    <thead><tr><th>Email</th><th>When</th><th>Source</th></tr></thead>
+    <tbody>
+      {% for o in optouts %}
+      <tr><td>{{ o.email }}</td><td>{{ o.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ o.source }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nobody has unsubscribed.</p>
+  {% endif %}
+</div>
+{% endblock %}

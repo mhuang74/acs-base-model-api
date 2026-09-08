@@ -1,0 +1,12 @@
+Hi {{ user_name }},
+
+Thank you for applying for access to ACS Infra. After review,
+we're not able to provision an account at this time.
+
+You're welcome to apply again later with more detail about what you'd
+like to run — a specific experiment or research question helps us a lot.
+
+If you think this is a mistake or would like more context, email
+infra@acsresearch.org.
+
+— ACS Research

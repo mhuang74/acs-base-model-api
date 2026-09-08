@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribe — ACS Infra{% endblock %}
+{% block content %}
+<div style="max-width: 34rem; margin: 4rem auto; text-align: center;">
+  {% if email and confirmed %}
+    <h1>You're unsubscribed</h1>
+    <p class="lead" style="margin-top: 1rem;">
+      <strong>{{ email }}</strong> won't receive any more update emails from us.
+      Account-related email (password resets, approvals) still arrives when you
+      trigger it.
+    </p>
+    <p class="muted">Changed your mind? Re-subscribe any time on the <a href="/#subscribe">home page</a>.</p>
+  {% elif email %}
+    <h1>Unsubscribe?</h1>
+    <p class="lead" style="margin-top: 1rem;">
+      Stop update emails to <strong>{{ email }}</strong>? Account-related email
+      (password resets, approvals) is unaffected.
+    </p>
+    <form method="post" style="margin-top: 1.5rem;">
+      <button class="btn btn-lg" type="submit">Unsubscribe</button>
+    </form>
+  {% else %}
+    <h1>Link not recognized</h1>
+    <p class="lead" style="margin-top: 1rem;">
+      This unsubscribe link is invalid or truncated. Copy the full link from the
+      email, or just reply to the email and we'll take you off the list by hand.
+    </p>
+  {% endif %}
+</div>
+{% endblock %}

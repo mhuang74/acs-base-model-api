@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Preview email — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .back-link { display: inline-block; margin-bottom: 1rem; font-size: 0.85rem; }
+  .preview-frame {
+    width: 100%;
+    height: 420px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #fff;
+  }
+  .section-h { font-family: var(--font-serif); font-size: 1.15rem; margin: 2rem 0 0.75rem; }
+  .edit-grid { display: grid; grid-template-columns: 8rem 1fr; gap: 0.6rem 1rem; align-items: center; max-width: 46rem; }
+  .edit-grid label { color: var(--muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .edit-grid input, .edit-grid textarea {
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--fg);
+    font-size: 0.9rem;
+  }
+  .edit-grid textarea { font-family: monospace; grid-column: 2; }
+  .flash-ok { color: var(--success); margin-bottom: 1rem; }
+  .flash-err { color: var(--error); margin-bottom: 1rem; }
+  .st-pending { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .st-sent { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .st-suppressed, .st-skipped { background: var(--surface-alt); color: var(--muted); border-color: var(--border); }
+  .st-failed { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  pre.code-block {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.8rem 0.9rem;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--fg);
+  }
+</style>
+{% endblock %}
+{% block content %}
+<a class="back-link" href="/admin/emails/bulk/{{ batch.id }}">&larr; {{ batch.name }}</a>
+<h1 style="word-break: break-word;">{{ item.subject }}</h1>
+<p class="lead">
+  <span class="pill st-{{ item.status }}">{{ item.status }}</span>
+  · to {{ item.to_email }}
+  {% if item.email_log_id %} · <a href="/admin/emails/{{ item.email_log_id }}">send log</a>{% endif %}
+</p>
+
+{% if flash_message %}<p class="flash-ok">{{ flash_message }}</p>{% endif %}
+{% if flash_error %}<p class="flash-err">{{ flash_error }}</p>{% endif %}
+
+<div class="section-h">Preview</div>
+<!-- Sandboxed like the email-audit detail page: the email's own markup cannot
+     script or restyle the admin page. The unsubscribe footer is appended at
+     send time, so it isn't part of this preview. -->
+<iframe class="preview-frame" sandbox srcdoc="{{ item.body_html }}" title="Email HTML preview"></iframe>
+
+{% if editable %}
+<div class="section-h">Edit</div>
+<form method="post" action="/admin/emails/bulk/{{ batch.id }}/items/{{ item.id }}">
+  <div class="edit-grid">
+    <label for="f-from">From</label>
+    <input id="f-from" type="text" name="from_email" value="{{ item.from_email }}" required>
+    <label for="f-cc">Cc</label>
+    <input id="f-cc" type="text" name="cc" value="{{ item.cc or '' }}" placeholder="comma-separated">
+    <label for="f-bcc">Bcc</label>
+    <input id="f-bcc" type="text" name="bcc" value="{{ item.bcc or '' }}" placeholder="comma-separated">
+    <label for="f-reply">Reply-to</label>
+    <input id="f-reply" type="text" name="reply_to" value="{{ item.reply_to or '' }}">
+    <label for="f-subject">Subject</label>
+    <input id="f-subject" type="text" name="subject" value="{{ item.subject }}" required>
+    <label for="f-text" style="align-self: start;">Text body</label>
+    <textarea id="f-text" name="body_text" rows="14" required>{{ item.body_text }}</textarea>
+    <label for="f-html" style="align-self: start;">HTML body</label>
+    <textarea id="f-html" name="body_html" rows="10"
+              placeholder="Leave empty to regenerate from the text body">{{ item.body_html }}</textarea>
+  </div>
+  <p style="margin-top: 1rem;">
+    <button class="btn" type="submit">Save changes</button>
+    <span class="muted" style="font-size: 0.82rem;">The recipient ("to") is fixed per row — upload a new CSV to change recipients.</span>
+  </p>
+</form>
+{% else %}
+<div class="section-h">Text body</div>
+<pre class="code-block">{{ item.body_text }}</pre>
+{% endif %}
+{% endblock %}

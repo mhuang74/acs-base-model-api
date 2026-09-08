@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Admin — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .status-approved { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .status-rejected { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  .admin-menu {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .admin-menu a.card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 120ms, box-shadow 120ms, transform 120ms;
+  }
+  .admin-menu a.card:hover {
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .admin-menu a.card .menu-title {
+    font-family: var(--font-serif);
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 0.35rem;
+  }
+  .admin-menu a.card .menu-desc { color: var(--muted); font-size: 0.9rem; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+<p class="lead" style="margin-bottom: 1rem;">
+  Admin tools. Pick a section below (also available from the Admin menu in the nav).
+</p>
+
+{% if flash_message %}
+  <p class="pill status-approved" style="display:inline-block;">{{ flash_message }}</p>
+{% endif %}
+{% if flash_error %}
+  <p class="pill status-rejected" style="display:inline-block;">{{ flash_error }}</p>
+{% endif %}
+
+<div class="admin-menu">
+  <a href="/admin/users" class="card">
+    <div class="menu-title">Users</div>
+    <div class="menu-desc">Signups, invites, budgets, API keys.</div>
+  </a>
+  <a href="/admin/models" class="card">
+    <div class="menu-title">Models</div>
+    <div class="menu-desc">Lifecycle, deploy, warm windows.</div>
+  </a>
+  <a href="/admin/uptime" class="card">
+    <div class="menu-title">Uptime</div>
+    <div class="menu-desc">Capacity probe schedule &amp; recent runs.</div>
+  </a>
+  <a href="/admin/feedback" class="card">
+    <div class="menu-title">Feedback</div>
+    <div class="menu-desc">User feedback triage.</div>
+  </a>
+  <a href="/admin/emails" class="card">
+    <div class="menu-title">Emails</div>
+    <div class="menu-desc">Delivery log &amp; stats.</div>
+  </a>
+</div>
+{% endblock %}

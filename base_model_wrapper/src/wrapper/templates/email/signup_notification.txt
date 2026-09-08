@@ -1,0 +1,27 @@
+A new ACS Infra signup is pending review.
+{% if reapplication %}
+NOTE: this is a RE-APPLICATION from someone previously declined.
+Their earlier answers are kept in the admin notes on their page.
+{% endif %}
+Email:  {{ email }}
+Name:   {{ applicant_name or "—" }}
+Org:    {{ org or "—" }}
+Source: {{ source or "organic / untagged link" }}
+Profile: {{ profile_link or "— not provided" }}
+
+
+Planned usage:
+{{ use_case or "(not provided)" }}
+
+Results:
+{{ outcome or "— not provided" }}
+
+Prior work:
+{{ prior_work or "— not provided" }}
+
+How did they hear about us?
+{{ referral or "— not provided" }}
+
+Review (approve / reject): {{ admin_url }}
+
+— ACS Infra

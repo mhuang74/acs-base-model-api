@@ -1,0 +1,99 @@
+[project]
+name = "acs-base-model-wrapper"
+version = "0.1.0"
+description = "Auth + key-management wrapper in front of the Modal/vLLM base-model endpoint."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "greenlet>=3.1",
+    "asyncpg>=0.30",
+    "psycopg2-binary>=2.9",
+    "alembic>=1.14",
+    "pydantic[email]>=2.10",
+    "pydantic-settings>=2.6",
+    "httpx>=0.28",
+    "structlog>=24.4",
+    "slowapi>=0.1.9",
+    "sentry-sdk[fastapi]>=2.20",
+    "typer>=0.13",
+    "transformers>=4.46",
+    "huggingface-hub>=0.26",
+    # tiktoken — required by the moonshotai/Kimi-K2-Base tokenizer (custom
+    # tokenizer.py shipped in the HF repo imports it). Hard dep of the
+    # multi-model registry once Kimi is enabled in MODELS_REGISTRY_JSON.
+    "tiktoken>=0.7",
+    "bcrypt>=4.2",
+    "cryptography>=43",
+    "itsdangerous>=2.2",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.20",
+    # /tutorial multi-page docs site (ACS-89): markdown-it-py is the renderer,
+    # mdit-py-plugins gives us anchors_plugin for H2/H3 id= anchors that the
+    # legacy fragment-redirect map depends on. markdown-it-py was already
+    # transitive via rich; declaring it explicitly so the docs build can't
+    # break on a future rich-less install.
+    "markdown-it-py>=3.0",
+    "mdit-py-plugins>=0.4",
+    "apscheduler>=3.10",
+    "croniter>=2.0",
+    # Pin to the 1.5 minor (migrated in ACS-125). modal_ops.py drives Modal's
+    # internal RPC surface (AppGetByDeploymentName / lifecycle.app_state /
+    # client.stub / FunctionGetCurrentStats / update_autoscaler); every symbol
+    # was verified byte-identical across 1.4.3/1.5.0/1.5.1 and the read path was
+    # run against the live workspace on 1.5.1 (so the ACS-123 "float to 1.5"
+    # break was environmental, not a rename — see ACS-126). Floor at 1.5.1 (the
+    # verified version), not 1.5.0 (prod's version during the incident, not
+    # re-verified). Patch/minor updates within 1.5 flow via `uv lock --upgrade`;
+    # moving to 1.6 is a tracked, code-change-gated migration.
+    "modal>=1.5.1,<1.6",
+    # Resend signs delivery webhooks with Svix; use their verifier rather than
+    # hand-rolling HMAC/base64 signature comparison (POST /webhooks/resend).
+    "svix>=1.40",
+    "zstandard>=0.22",
+]
+
+[project.scripts]
+acs-keys = "cli.acs_keys:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "aiosqlite>=0.20",
+    "ruff>=0.7",
+    # SSE-routing tests stub the upstream httpx calls via respx. Without it
+    # tests/test_sse_routing.py self-skips, leaving the multi-model routing
+    # surface uncovered.
+    "respx>=0.22",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["wrapper*", "cli*", "acs_model_registry*"]
+
+[tool.setuptools.package-data]
+wrapper = [
+    "templates/*.html",
+    "templates/email/*.html",
+    "templates/email/*.txt",
+    # Static assets served by the web routes (e.g. the favicon).
+    "static/*.svg",
+    # Multi-page /tutorial docs (ACS-89). Shipped inside the wheel so the
+    # boot-time renderer can find them at ``<package>/docs/...``.
+    "docs/*.md",
+    "docs/examples/*.md",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

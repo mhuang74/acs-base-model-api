@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — ACS Infra{% endblock %}
+{% block content %}
+
+<style>
+  /* The API-keys table is dense — tighten it so it fits the page without a
+     horizontal scrollbar. Scoped to .keys-table so other tables are untouched. */
+  .keys-table { font-size: 0.88rem; }
+  .keys-table th, .keys-table td { padding: 0.5rem 0.6rem; }
+  .keys-table code { font-size: 0.85em; }
+  /* Give the Name column room so the inline rename field + icons fit on one
+     line without forcing the table wider than the page. */
+  .keys-table .name-col { width: 30%; min-width: 150px; }
+  .keys-table .key-rename { display: block; }
+  .keys-table .key-rename-form { width: 100%; }
+  /* Action buttons (pause/resume + trash) grouped tight and right-aligned. */
+  .keys-table .actions-col { width: 1%; white-space: nowrap; }
+  .key-actions { display: flex; gap: 0.35rem; justify-content: flex-end; }
+  .key-actions form { display: inline; margin: 0; }
+  .key-actions .icon-btn { min-height: 30px; padding: 0.3rem 0.45rem; }
+  .key-actions .icon-btn svg { width: 14px; height: 14px; }
+</style>
+
+<h1>Dashboard</h1>
+
+{# Retro-mapping nudge (ACS-310): approved users who haven't linked Discord.
+   Suppressed right after a callback so it can't argue with the card's own
+   status message. #}
+{% if discord_oauth_enabled and not user.discord_username and not discord_status %}
+<p class="notice" style="margin-bottom: 1.5rem;">
+  <strong>Join the community.</strong> Connect your Discord below and we'll add
+  you to the server — that's where model updates, feedback threads and other
+  researchers' experiments live. <a href="#community">Connect Discord →</a>
+</p>
+{% endif %}
+
+{# --- API keys (top, collapsible) ----------------------------------------- #}
+<section>
+  <details open>
+    <summary><h2 style="display: inline; font-size: 1.3rem;">API keys</h2></summary>
+    <div class="details-body">
+
+  {% if key_error %}<p class="error">{{ key_error }}</p>{% endif %}
+
+  {% if user.monthly_token_budget_total %}
+  <div class="card" style="margin-bottom: 1.25rem; padding: 1rem 1.25rem;">
+    <div style="font-size: 0.92rem; color: var(--fg-soft);">
+      <strong>Across all your keys this month:</strong>
+      {{ "{:,}".format(aggregate_used) }} / {{ "{:,}".format(user.monthly_token_budget_total) }} tokens
+      <span class="muted">({{ "%.1f%%" | format(100 * aggregate_used / user.monthly_token_budget_total) }})</span>
+    </div>
+    {% if aggregate_used >= user.monthly_token_budget_total %}
+    <p class="error" style="margin: 0.75rem 0 0; font-size: 0.88rem;">
+      Aggregate budget exhausted. Requests will be rejected until next month
+      or until an admin raises the cap.
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if keys %}
+  <p class="muted" style="font-size: 0.85rem; margin: 0 0 0.75rem;">
+    Your first key (named <code>initial</code>) was created automatically when
+    your account was approved. The workbench uses your currently selected key,
+    so it can show usage even for a key you didn't create by hand.
+  </p>
+  <div class="table-wrap">
+    <table class="keys-table">
+      <thead>
+        <tr>
+          <th>Prefix</th>
+          <th class="name-col">Name</th>
+          <th>Created</th>
+          <th>Last used</th>
+          <th>This month</th>
+          <th>Status</th>
+          <th class="actions-col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for k in keys %}
+        <tr>
+          <td><code>{{ k.key_prefix }}</code></td>
+          <td class="name-col">
+            {# Inline rename: name + pen; pen swaps to an in-place input + check/X. #}
+            <span class="key-rename" data-name="{{ k.name or '' }}">
+              <span class="key-rename-view">
+                <span class="key-rename-text">{{ k.name or "—" }}</span>
+                <button type="button" class="ghost icon-btn key-rename-edit" aria-label="Rename key" title="Rename">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                </button>
+              </span>
+              <form action="/me/keys/{{ k.id }}/rename" method="post" class="key-rename-form" hidden>
+                <input type="text" name="name" value="{{ k.name or '' }}" maxlength="64"
+                       placeholder="key name" class="key-rename-input" style="margin: 0;">
+                <button type="submit" class="ghost icon-btn" aria-label="Save name" title="Save">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                </button>
+                <button type="button" class="ghost icon-btn key-rename-cancel" aria-label="Cancel rename" title="Cancel">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </form>
+            </span>
+          </td>
+          <td>{{ k.created_at.strftime('%Y-%m-%d') }}</td>
+          <td>
+            {% if k.last_used_at %}{{ k.last_used_at.strftime('%Y-%m-%d') }}{% else %}<span class="muted">never</span>{% endif %}
+          </td>
+          <td style="white-space: nowrap;">
+            {% if k.monthly_token_budget == 0 %}
+              {# No per-key limit: the account-wide cap is what actually applies,
+                 so show that instead of a bare ∞ (ACS-13, Annie's feedback). #}
+              {% if user.monthly_token_budget_total %}
+                {{ "{:,}".format(k.tokens_used_this_month) }}<span class="muted">/{{ "{:,}".format(user.monthly_token_budget_total) }}</span>
+                <span class="muted" title="No per-key limit — your account-wide monthly cap applies.">(account)</span>
+              {% else %}
+                {{ "{:,}".format(k.tokens_used_this_month) }}
+                <span class="muted">/ ∞</span>
+              {% endif %}
+            {% else %}
+              {{ "{:,}".format(k.tokens_used_this_month) }}<span class="muted">/{{ "{:,}".format(k.monthly_token_budget) }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if k.revoked_at %}
+              <span class="pill revoked">revoked {{ k.revoked_at.strftime('%Y-%m-%d') }}</span>
+            {% elif k.disabled_at %}
+              <span class="pill paused">paused</span>
+            {% else %}
+              <span class="pill active">active</span>
+            {% endif %}
+          </td>
+          <td class="actions-col">
+            {% if not k.revoked_at %}
+            <div class="key-actions">
+              {% if k.disabled_at %}
+              {# Resume — reversible, no confirm needed. #}
+              <form action="/me/keys/{{ k.id }}/resume" method="post">
+                <button type="submit" class="secondary icon-btn" title="Resume key" aria-label="Resume key">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                </button>
+              </form>
+              {% else %}
+              {# Pause — reversible, no confirm needed. #}
+              <form action="/me/keys/{{ k.id }}/pause" method="post">
+                <button type="submit" class="secondary icon-btn" title="Pause key" aria-label="Pause key">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                </button>
+              </form>
+              {% endif %}
+              {# Revoke — permanent, uses the reusable confirm modal (trash icon). #}
+              <form action="/me/keys/{{ k.id }}/revoke" method="post"
+                    data-confirm="Permanently revoke key {{ k.key_prefix }}? This cannot be undone."
+                    data-confirm-label="Revoke key">
+                <button type="submit" class="danger icon-btn" title="Revoke key (permanent)" aria-label="Revoke key">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                </button>
+              </form>
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">You don't have any API keys yet — create one below.</p>
+  {% endif %}
+
+  <details style="margin-top: 1.5rem;">
+    <summary>Create a new key</summary>
+    <div class="details-body">
+      <form action="/me/keys" method="post">
+        <label>Name (optional)
+          <input type="text" name="name" placeholder="e.g. laptop, batch-rollouts" maxlength="64">
+        </label>
+
+        <fieldset style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.85rem 1rem; margin: 0;">
+          <legend style="font-size: 0.9rem; padding: 0 0.4rem;">Per-key monthly budget</legend>
+          <label class="fb-check" style="font-weight: 500;">
+            <input type="checkbox" name="unbounded" id="key-unbounded" value="true" checked>
+            No per-key limit (your account limit still applies)
+          </label>
+          <label id="key-budget-row" style="margin-top: 0.6rem;">Token budget
+            {# Not `disabled` even when "no per-key limit" is checked: the field
+               must stay focusable so focusing/typing can auto-uncheck the box
+               (see optIntoBudget below). When the box is checked the server
+               ignores this value (unbounded wins), so an enabled field is safe. #}
+            <input type="number" name="budget" id="key-budget"
+                   {% if account_limit %}value="{{ account_limit }}" max="{{ account_limit }}"{% else %}value="{{ default_budget }}" max="1000000000"{% endif %}
+                   min="1">
+          </label>
+          <p class="muted" style="font-size: 0.85em; margin: 0.5rem 0 0;">
+            {% if account_limit %}
+              Account limits still apply — your current account limit is
+              <strong>{{ "{:,}".format(account_limit) }}</strong> tokens/month across all keys.
+              A per-key budget above this is capped at the account limit.
+            {% else %}
+              Your account has no aggregate monthly limit. Set a per-key number to
+              cap this individual key.
+            {% endif %}
+          </p>
+        </fieldset>
+
+        <div>
+          <button type="submit">Create key</button>
+        </div>
+      </form>
+      <script>
+        (function () {
+          var cb = document.getElementById('key-unbounded');
+          var row = document.getElementById('key-budget-row');
+          var input = document.getElementById('key-budget');
+          if (!cb || !input) return;
+          function sync() {
+            // Dim (but don't disable) the budget field when "no per-key limit"
+            // is checked, so it stays focusable for optIntoBudget below.
+            row.style.opacity = cb.checked ? '0.5' : '1';
+          }
+          cb.addEventListener('change', sync);
+          // Typing in / focusing the budget field clearly means the user wants a
+          // per-key cap, so auto-uncheck "no per-key limit" and enable the input.
+          function optIntoBudget() {
+            if (cb.checked) {
+              cb.checked = false;
+              sync();
+              input.focus();
+            }
+          }
+          input.addEventListener('focus', optIntoBudget);
+          input.addEventListener('input', optIntoBudget);
+          sync();
+        })();
+      </script>
+    </div>
+  </details>
+
+    </div>
+  </details>
+</section>
+
+{# --- Community: Discord linking (ACS-269) --------------------------------- #}
+{% if discord_oauth_enabled or beta_discord_url %}
+<section id="community">
+  <h2 style="font-size: 1.3rem;">Community</h2>
+  <div class="card">
+    {% if discord_status == 'connected' %}
+      <p class="success" style="margin-top: 0;">Discord connected — welcome to the server!</p>
+    {% elif discord_status == 'noadd' %}
+      <p class="error" style="margin-top: 0;">
+        Your Discord account is linked, but we couldn't add you to the server
+        automatically{% if beta_discord_url %} — please join with the invite link below{% endif %}.
+      </p>
+    {% elif user.discord_guild_joined is false and beta_discord_url %}
+      {# Same situation, seen on a later visit (ACS-307). #}
+      <p class="muted" style="margin-top: 0;">
+        You're linked, but we couldn't add you to the server automatically —
+        use the invite link below to join.
+      </p>
+    {% elif discord_status == 'conflict' %}
+      <p class="error" style="margin-top: 0;">That Discord account is already linked to another ACS account. Contact us if that seems wrong.</p>
+    {% elif discord_status == 'declined' %}
+      <p class="muted" style="margin-top: 0;">No problem — you can connect Discord any time.</p>
+    {% elif discord_status == 'disconnected' %}
+      <p class="muted" style="margin-top: 0;">Discord disconnected.</p>
+    {% elif discord_status == 'error' %}
+      <p class="error" style="margin-top: 0;">Connecting Discord failed — please try again.</p>
+    {% endif %}
+
+    {% if user.discord_username %}
+      <p style="margin-top: 0;">
+        Discord: <span class="pill status-approved">connected</span>
+        as <code>{{ user.discord_username }}</code>
+        {% if user.discord_connected_at %}<span class="muted">since {{ user.discord_connected_at.strftime('%Y-%m-%d') }}</span>{% endif %}
+      </p>
+      {# Linked but the bot couldn't add them: the server link wouldn't work,
+         so offer the invite. Driven by the persisted flag, not just the
+         one-render ?discord= status, so it survives a reload (ACS-307). #}
+      {% if user.discord_guild_joined is false %}
+        {% if beta_discord_url %}
+        <p style="margin-top: 0;">
+          <a href="{{ beta_discord_url }}" target="_blank" rel="noopener">Join with the invite link →</a>
+        </p>
+        {% else %}
+        <p class="muted" style="margin-top: 0;">
+          Ask us for an invite at
+          <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a>.
+        </p>
+        {% endif %}
+      {% elif discord_server_url %}
+      {# A linked member opens the server itself, not a join invite (ACS-306). #}
+      <p style="margin-top: 0;">
+        <a href="{{ discord_server_url }}" target="_blank" rel="noopener">Open the Discord server →</a>
+      </p>
+      {% endif %}
+      <form action="/discord/disconnect" method="post" style="margin: 0;">
+        <button type="submit" class="ghost small">Disconnect</button>
+      </form>
+    {% else %}
+      <p style="margin-top: 0;">
+        Our beta community lives on Discord — model updates, feedback threads,
+        and other researchers' experiments.
+      </p>
+      {% if discord_oauth_enabled %}
+        <a href="/discord/connect" class="btn" style="display: inline-block;">Connect Discord</a>
+        <p class="muted" style="font-size: 0.85rem; margin-bottom: 0;">
+          Connecting adds you to the server and links your Discord account to
+          your ACS account.
+        </p>
+      {% elif beta_discord_url %}
+        <p style="margin-bottom: 0;"><a href="{{ beta_discord_url }}" target="_blank" rel="noopener">Join the Discord server</a></p>
+      {% endif %}
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+{# --- Account (collapsible: profile + change password) -------------------- #}
+<section>
+  <details {% if pw_error or pw_success %}open{% endif %}>
+    <summary><h2 style="display: inline; font-size: 1.3rem;">Account</h2></summary>
+    <div class="details-body">
+
+      <h3 style="margin-top: 0.5rem;">Profile</h3>
+      <div class="card">
+        <dl class="fields">
+          <dt>Email</dt><dd>{{ user.email }}</dd>
+          <dt>Role</dt><dd><code>{{ user.role }}</code></dd>
+          <dt>Member since</dt><dd>{{ user.created_at.strftime('%Y-%m-%d') }}</dd>
+          {% if user.org %}<dt>Org</dt><dd>{{ user.org }}</dd>{% endif %}
+        </dl>
+      </div>
+
+      <h3 style="margin-top: 1.75rem;">Change password</h3>
+      {% if pw_error %}<p class="error" style="max-width: 420px;">{{ pw_error }}</p>{% endif %}
+      {% if pw_success %}<p class="success" style="max-width: 420px;">{{ pw_success }}</p>{% endif %}
+
+      <form action="/me/password" method="post">
+        <label>Current password
+          <input type="password" name="current_password" required autocomplete="current-password">
+        </label>
+        <label>New password
+          <input type="password" name="new_password" required minlength="8" maxlength="72" autocomplete="new-password">
+        </label>
+        <label>Confirm new password
+          <input type="password" name="confirm_password" required minlength="8" maxlength="72" autocomplete="new-password">
+        </label>
+        <div>
+          <button type="submit">Update password</button>
+        </div>
+      </form>
+      <p class="muted" style="margin-top: 0.75rem; font-size: 0.85em; max-width: 420px;">
+        8–72 characters.
+      </p>
+
+    </div>
+  </details>
+</section>
+
+{% endblock %}

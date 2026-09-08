@@ -1,0 +1,206 @@
+{#
+  Shared per-token logprobs heatmap primitive (ACS-148 / ACS-164).
+
+  Both the loom (tree exploration) and compare (N-lane) pages colour generated
+  tokens by probability and show ranked alternatives on click — this is the one
+  copy of that logic. Include it once per page:
+
+      {% include "_logprobs_heatmap.html" %}
+
+  then call ``window.acsAppendHeatmap(container, entries[, fallbackText])`` where
+  each entry is ``{token, logprob, top: [{token, logprob}, ...]}`` (the shape the
+  loom returns server-side and compare flattens client-side). The script is
+  idempotent (safe if a page somehow includes it twice) and creates its own
+  floating popover + outside-click dismiss, so callers need no extra markup.
+#}
+<style>
+  /* Per-token heatmap span. Background colour is set inline from exp(logprob).
+     pre-wrap so a token's own spaces/newlines keep their width and line breaks
+     even if a host container forgets to set it. */
+  .acs-tok { border-radius: 2px; padding: 0 1px; cursor: help; white-space: pre-wrap; }
+  .acs-tok:hover { outline: 1px solid var(--accent); }
+  /* Muted glyph marking an invisible character (⏎ newline, ⇥ tab) inside a
+     token. Drawn via ::before so the marker is NOT part of the text — a
+     select-and-copy of the heatmap must yield exactly the completion text. */
+  .acs-tok .acs-ws { opacity: 0.55; font-size: 0.85em; user-select: none; }
+  .acs-tok .acs-ws.acs-ws-nl::before { content: '⏎'; }
+  .acs-tok .acs-ws.acs-ws-tab::before { content: '⇥'; }
+
+  /* Top-k alternatives popover. Document-anchored (absolute + page coords),
+     NOT fixed: it must stay with the clicked token when the page scrolls
+     instead of gliding over the site (ACS-258). */
+  .acs-logprob-popover {
+    position: absolute; z-index: 50; display: none;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+    padding: 0.5rem 0.6rem; font-family: var(--font-mono); font-size: 0.78rem;
+    min-width: 180px; max-width: 280px;
+    /* A top-k=20 popover is ~3x the position clamp's 160px reserve; cap and
+       scroll internally instead of growing the document (ACS-258 review). */
+    max-height: 60vh; overflow-y: auto;
+  }
+  .acs-logprob-popover.show { display: block; }
+  .acs-logprob-popover .pop-tok { font-weight: 600; margin-bottom: 0.3rem; }
+  .acs-logprob-popover table { width: 100%; border-collapse: collapse; }
+  .acs-logprob-popover td { padding: 1px 4px; }
+  .acs-logprob-popover td.prob { text-align: right; color: var(--muted); }
+  .acs-logprob-popover tr.is-chosen td { color: var(--accent); font-weight: 600; }
+</style>
+<script>
+  (function () {
+    if (window.acsAppendHeatmap) return;  // include-once guard
+
+    function acsLogprobColor(logprob) {
+      if (logprob === null || logprob === undefined) return 'transparent';
+      const p = Math.exp(logprob);                 // 0..1
+      // red (low) -> yellow -> green (high): HSL hue 0->120.
+      const hue = Math.max(0, Math.min(120, p * 120));
+      return 'hsla(' + hue.toFixed(0) + ', 70%, 50%, 0.30)';
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    let popover = null;
+    function ensurePopover() {
+      if (popover) return popover;
+      popover = document.createElement('div');
+      popover.className = 'acs-logprob-popover';
+      popover.setAttribute('role', 'dialog');
+      popover.setAttribute('aria-label', 'Token alternatives');
+      document.body.appendChild(popover);
+      document.addEventListener('click', (ev) => {
+        if (!popover.contains(ev.target) && !ev.target.classList.contains('acs-tok')) {
+          popover.classList.remove('show');
+        }
+      });
+      return popover;
+    }
+
+    // Whitespace made visible for the popover table, where a bare " " or "\n"
+    // token would render as an empty-looking row.
+    function visibleWs(s) {
+      return String(s == null ? '' : s)
+        .replace(/ /g, '␣').replace(/\n/g, '⏎').replace(/\t/g, '⇥');
+    }
+
+    function showPopover(ev, entry) {
+      const top = (entry.top || []).slice();
+      const pop = ensurePopover();
+      if (!top.length) { pop.classList.remove('show'); return; }
+      // At high temperature the sampled token often falls outside the top-k
+      // alternatives; without this row the popover looks like the model picked
+      // something not on the list. Slot it in at its ranked position, labelled
+      // "sampled" so it's distinguishable from the model-reported top-k rows.
+      let injected = null;
+      if (!top.some((alt) => alt.token === entry.token) &&
+          entry.logprob !== null && entry.logprob !== undefined) {
+        injected = { token: entry.token, logprob: entry.logprob };
+        top.push(injected);
+        top.sort((a, b) => (b.logprob ?? -Infinity) - (a.logprob ?? -Infinity));
+      }
+      // Highlight exactly one row as the sampled token. Prefer a token+logprob
+      // match: two top-k rows can share a rendered string (BPE byte variants),
+      // and a string-only match could light up the wrong one.
+      let chosenIdx = top.findIndex(
+        (alt) => alt.token === entry.token && alt.logprob === entry.logprob);
+      if (chosenIdx < 0) chosenIdx = top.findIndex((alt) => alt.token === entry.token);
+      let html = '<div class="pop-tok">' + esc(visibleWs(entry.token)) + '</div><table>';
+      top.forEach((alt, i) => {
+        const cls = i === chosenIdx ? ' class="is-chosen"' : '';
+        const p = Math.exp(alt.logprob);
+        html += '<tr' + cls + '><td>' + esc(visibleWs(alt.token)) + '</td>' +
+          '<td class="prob">' + p.toFixed(3) + (alt === injected ? ' · sampled' : '') + '</td></tr>';
+      });
+      html += '</table>';
+      pop.innerHTML = html;
+      pop.classList.add('show');
+      // Page coordinates (document-anchored), clamped so the box opens fully
+      // inside the current viewport.
+      pop.style.left = Math.min(ev.pageX + 8, window.scrollX + window.innerWidth - 290) + 'px';
+      pop.style.top = Math.min(ev.pageY + 8, window.scrollY + window.innerHeight - 160) + 'px';
+    }
+
+    // Fill a token span: real whitespace is kept (so layout/line breaks are
+    // faithful) but each newline/tab also gets a muted marker glyph, and the
+    // span's background colour makes space tokens visible on their own.
+    function appendTokenText(span, token) {
+      const s = String(token == null ? '' : token);
+      // Fast path: the vast majority of tokens carry no newline/tab, and this
+      // runs per token per render (per chunk while a loom streams).
+      if (s.indexOf('\n') < 0 && s.indexOf('\t') < 0) {
+        span.textContent = s;
+        return;
+      }
+      s.split(/(\n|\t)/).forEach((part) => {
+        if (part === '\n' || part === '\t') {
+          // Marker glyph is CSS-only (::before) so copied text stays clean.
+          const ws = document.createElement('span');
+          ws.className = 'acs-ws ' + (part === '\n' ? 'acs-ws-nl' : 'acs-ws-tab');
+          ws.setAttribute('aria-hidden', 'true');
+          span.appendChild(ws);
+        }
+        if (part) span.appendChild(document.createTextNode(part));
+      });
+    }
+
+    // Append colour-coded token spans to ``container``. Falls back to plain text
+    // when there are no logprob entries (logprobs off / not yet streamed).
+    function acsAppendHeatmap(container, logprobs, fallbackText) {
+      if (Array.isArray(logprobs) && logprobs.length) {
+        logprobs.forEach((entry) => {
+          const span = document.createElement('span');
+          span.className = 'acs-tok';
+          appendTokenText(span, entry.token);
+          span.style.backgroundColor = acsLogprobColor(entry.logprob);
+          if (entry.logprob !== null && entry.logprob !== undefined) {
+            span.title = 'logprob ' + entry.logprob.toFixed(3) +
+              '  (p=' + Math.exp(entry.logprob).toFixed(3) + ')';
+          }
+          span.addEventListener('click', (ev) => { ev.stopPropagation(); showPopover(ev, entry); });
+          container.appendChild(span);
+        });
+      } else {
+        container.appendChild(document.createTextNode(fallbackText || ''));
+      }
+    }
+
+    // Convert a vLLM completions ``logprobs`` object — {tokens, token_logprobs,
+    // top_logprobs} — into the [{token, logprob, top:[{token,logprob}]}] shape
+    // acsAppendHeatmap wants. Mirrors the server-side _normalise_logprobs so a
+    // client that gets raw chunks (single-pane workbench, compare) renders the
+    // same heatmap as the loom (which normalises server-side). Tolerant of
+    // missing fields and a null logprob (no TypeError in the sort).
+    function acsNormalizeLogprobs(lp) {
+      if (!lp || typeof lp !== 'object') return [];
+      const tokens = lp.tokens || [];
+      const tlp = lp.token_logprobs || [];
+      const tops = lp.top_logprobs || [];
+      const out = [];
+      for (let i = 0; i < tokens.length; i++) {
+        const logprob = (typeof tlp[i] === 'number') ? tlp[i] : null;
+        const topMap = (tops[i] && typeof tops[i] === 'object') ? tops[i] : null;
+        const top = [];
+        if (topMap) {
+          for (const k of Object.keys(topMap)) {
+            top.push({ token: k, logprob: topMap[k] });
+          }
+          top.sort((a, b) => (b.logprob ?? -Infinity) - (a.logprob ?? -Infinity));
+        }
+        out.push({ token: tokens[i], logprob: logprob, top: top });
+      }
+      return out;
+    }
+
+    window.acsLogprobColor = acsLogprobColor;
+    window.acsAppendHeatmap = acsAppendHeatmap;
+    window.acsNormalizeLogprobs = acsNormalizeLogprobs;
+    // Exported for hosts that render tokens behind a click-opaque layer (the
+    // workbench's in-box heatmap maps textarea caret position → entry and
+    // opens the popover itself, ACS-258).
+    window.acsShowPopover = showPopover;
+    window.acsHidePopover = function () { if (popover) popover.classList.remove('show'); };
+  })();
+</script>

@@ -1,0 +1,1454 @@
+{# Compare pane — included by workbench.html as one of the two workbench modes.
+   NOT a standalone page: the session chrome (title / rename / delete / export)
+   and the sidebar live in workbench.html and are shared across both modes.
+   Renders the multi-lane "one prompt across N models/params" surface.
+   Expects the same template context as _render_chat plus: default_max_tokens,
+   default_temperature, max_lanes. #}
+{# Shared per-token logprobs colour ramp (window.acsLogprobColor) — same primitive
+   the loom uses, so the two colour tokens identically. workbench.html does NOT
+   otherwise include this partial, so there is no double-define of the ramp. #}
+{% include "_logprobs_heatmap.html" %}
+<style>
+  /* Compare-pane-only styles. The shared shell (.wb-layout / .wb-sidebar /
+     .wb-form) is defined once in workbench.html; only the .cmp-* lane styles
+     live here, scoped so they never touch the single-pane composer. */
+  .cmp-intro { color: var(--muted); font-size: 0.88rem; margin: 0 0 1.1rem; }
+  .cmp-intro strong { color: var(--fg); font-weight: 600; }
+  .cmp-intro code { font-size: 0.85em; }
+
+  /* Shared prompt block. */
+  .cmp-prompt-textarea {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    min-height: 9rem;
+    padding: 0.9rem 1rem;
+  }
+
+  .cmp-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem 1.1rem;
+    align-items: flex-end;
+    margin: 0.85rem 0 1.25rem;
+  }
+  .cmp-toolbar label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .cmp-toolbar .spacer { flex: 1; min-width: 0; }
+  .cmp-keyselect {
+    appearance: none;
+    -webkit-appearance: none;
+    height: 2.25rem;
+    max-width: 20rem;
+    padding: 0 1.9rem 0 0.7rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--fg);
+    background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 0.5rem center;
+    background-size: 1.2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-overflow: ellipsis;
+    transition: border-color 120ms, box-shadow 120ms, background-color 120ms;
+  }
+  .cmp-keyselect:hover { border-color: var(--border-strong); background-color: var(--surface-alt); }
+  .cmp-keyselect:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .cmp-keyselect:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .cmp-run-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .cmp-run-hint { color: var(--muted); font-size: 0.78rem; }
+
+  /* Lane grid — auto-fit so 2 lanes go side by side, more wrap into rows.
+     Each lane keeps a comfortable min width before stacking. */
+  .cmp-lanes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    gap: 1rem;
+    align-items: start;
+  }
+  @media (max-width: 760px) {
+    .cmp-lanes { grid-template-columns: 1fr; }
+  }
+
+  .cmp-lane {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    /* overflow:visible so the model picker's absolutely-positioned dropdown can
+       extend past the lane box (ACS-181). The old native <select> rendered in
+       the browser top layer and couldn't be clipped; overflow:hidden here would
+       cut off / make unreachable the lower options of the custom listbox once
+       the registry has enough models. Corner rounding is preserved by rounding
+       the head/foot directly (they carry the coloured backgrounds); the middle
+       (params/output) is rectangular so nothing there needs clipping. */
+    overflow: visible;
+  }
+  .cmp-lane.is-failed { border-color: var(--error-border); }
+
+  .cmp-lane-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.6rem 0.7rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-alt);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  /* Per-lane model picker — reuses the single-pane custom listbox (.wb-select*)
+     which cascades in from workbench.html (ACS-181). Only geometry is overridden
+     here so it fits the compact lane head: the shared widget defaults to a wide
+     min-width meant for the single-pane composer. */
+  /* `.wb-select.cmp-model-picker` (0,2,0) beats the shared `.wb-select`
+     min-width:28rem (0,1,0) on specificity, not just source order. */
+  .wb-select.cmp-model-picker { flex: 1; min-width: 0; position: relative; }
+  .cmp-model-picker .wb-select-trigger {
+    min-height: 0;
+    height: 2rem;
+    padding: 0 0.55rem;
+    font-size: 0.88rem;
+    gap: 0.4rem;
+  }
+  /* Disabled affordance the native <select> used to get for free from the UA
+     (the trigger is a <button>, so it needs it explicitly). */
+  .cmp-model-picker .wb-select-trigger:disabled { opacity: 0.55; cursor: not-allowed; }
+  .cmp-model-picker .wb-select-menu { min-width: 16rem; }
+
+  .cmp-lane-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.85rem;
+    height: 1.85rem;
+    padding: 0;
+    flex-shrink: 0;
+    background: var(--surface);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .cmp-lane-btn:hover { background: var(--surface-alt); color: var(--accent); border-color: var(--border-strong); }
+  .cmp-lane-btn.danger:hover { color: var(--error); border-color: var(--error-border); background: var(--error-bg); }
+  .cmp-lane-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cmp-lane-btn svg { width: 0.95rem; height: 0.95rem; }
+
+  /* Sampling controls — collapsible via <details>. Styled as an explicit
+     control (chevron + button affordance) so it doesn't read as static text
+     and get missed (ACS-181). */
+  .cmp-params { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+  /* The disclosure caret + its rotate-on-open is the app-global
+     `details summary::before` (base.html); we only tune spacing, contrast and
+     the label so it reads as a control, not muted static text. */
+  .cmp-params > summary {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0.7rem;
+    color: var(--fg);
+    cursor: pointer;
+    user-select: none;
+    transition: background 120ms, color 120ms;
+  }
+  .cmp-params > summary::before { margin-right: 0.4rem; }
+  .cmp-params > summary:hover { background: var(--surface-alt); }
+  .cmp-params > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .cmp-params-summary-text {
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .cmp-params[open] > summary { border-bottom: 1px solid var(--border); }
+  .cmp-params-body {
+    padding: 0.7rem;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.55rem 0.7rem;
+  }
+  .cmp-params-body label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .cmp-num, .cmp-text {
+    appearance: none;
+    -moz-appearance: textfield;
+    width: 100%;
+    height: 2rem;
+    padding: 0 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: border-color 120ms, box-shadow 120ms;
+  }
+  .cmp-num::-webkit-outer-spin-button,
+  .cmp-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .cmp-num:focus, .cmp-text:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .cmp-logprobs-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding-top: 0.2rem;
+    border-top: 1px dashed var(--border);
+    margin-top: 0.2rem;
+  }
+  .cmp-check {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .cmp-check input { width: auto; margin: 0; }
+  .cmp-logprobs-count { width: 4rem; }
+  .cmp-logprobs-count:disabled { opacity: 0.4; }
+
+  /* Output area. */
+  .cmp-output {
+    flex: 1;
+    min-height: 12rem;
+    max-height: 32rem;
+    overflow: auto;
+    padding: 0.8rem 0.85rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--fg);
+  }
+  .cmp-output .cmp-prefix { color: var(--muted); }
+  .cmp-output .cmp-placeholder { color: var(--muted); font-style: italic; }
+
+  /* Per-token logprob span. Background colored by probability; tooltip shows
+     the alternatives. Inline so they flow like text. */
+  .cmp-tok {
+    position: relative;
+    border-radius: 3px;
+    padding: 0 0.5px;
+    cursor: help;
+  }
+  /* Tooltip for token alternatives — JS-positioned fixed element instead of
+     ::after, so it isn't clipped by the lane's overflow:auto. */
+  .cmp-tt {
+    position: fixed;
+    z-index: 400;
+    max-width: 22rem;
+    background: var(--fg);
+    color: var(--bg);
+    border-radius: 6px;
+    padding: 0.5rem 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
+    display: none;
+  }
+  .cmp-tt.show { display: block; }
+  .cmp-tt-row { display: flex; justify-content: space-between; gap: 1rem; white-space: nowrap; }
+  .cmp-tt-row.is-chosen { font-weight: 700; }
+  .cmp-tt-tok { overflow: hidden; text-overflow: ellipsis; }
+  .cmp-tt-p { opacity: 0.85; }
+
+  .cmp-lane-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--border);
+    background: var(--surface-alt);
+    font-size: 0.76rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+  .cmp-lane-status { flex: 1; min-width: 6rem; overflow: hidden; text-overflow: ellipsis; }
+  .cmp-lane-status.is-error { color: var(--error); }
+  .cmp-lane-status.is-done { color: var(--success); }
+  .cmp-lane-count { white-space: nowrap; }
+  .cmp-foot-btn {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid transparent;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    min-height: 0;
+  }
+  .cmp-foot-btn:hover { background: var(--surface); color: var(--fg); border-color: var(--border); }
+  .cmp-foot-btn.danger { color: var(--error); }
+  .cmp-foot-btn.danger:hover { background: var(--error-bg); border-color: var(--error-border); color: var(--error); }
+  .cmp-foot-btn[hidden] { display: none; }
+  .cmp-copied { color: var(--success); opacity: 0; transition: opacity 0.15s ease; }
+  .cmp-copied.show { opacity: 1; }
+
+  .cmp-add-row { margin-top: 1.1rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+  .cmp-add-hint { color: var(--muted); font-size: 0.8rem; }
+
+  /* Compare-run history (ACS-180). Reuses .wb-snapshots list chrome from
+     workbench.html; these rules add the per-lane model chips + the compare
+     row layout. */
+  .cmp-history { margin-top: 2rem; font-size: 0.88rem; }
+  .cmp-history .cmp-hist-summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.5rem 0;
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .cmp-history .cmp-hist-summary::-webkit-details-marker { display: none; }
+  .cmp-history .cmp-hist-ts { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .cmp-history .cmp-hist-prompt { color: var(--fg); flex: 1 1 12rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cmp-history .cmp-hist-nlanes { color: var(--muted); white-space: nowrap; }
+  .cmp-hist-chips { display: flex; gap: 0.3rem; flex-wrap: wrap; margin: 0.35rem 0 0.5rem; }
+  .cmp-hist-chip {
+    font-size: 0.72rem;
+    padding: 0.1rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .cmp-hist-restore { margin-left: auto; }
+
+  @media (max-width: 480px) {
+    .cmp-params-body { grid-template-columns: 1fr; }
+    .cmp-prompt-textarea { font-size: 0.85rem; }
+  }
+</style>
+
+<p class="cmp-intro">
+  Send <strong>one shared prompt</strong> to several lanes at once — each with its own model
+  and sampling params — and watch them stream side by side. To compare
+  <strong>n&gt;1 samples</strong> of the same model, duplicate a lane.
+  The heatmap (when enabled per lane) colors each generated token by its probability.
+</p>
+
+{% if no_key %}
+<p class="error">
+  You don't have an active API key. Visit <a href="/dashboard">your dashboard</a> to create one.
+</p>
+{% endif %}
+
+<p id="cmp-error" class="error" style="display:none;"></p>
+
+<label style="font-size:0.72rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);display:flex;flex-direction:column;gap:0.3rem;">
+  Shared prompt
+  <textarea id="cmp-prompt" class="cmp-prompt-textarea" rows="6" autocomplete="off"
+            spellcheck="false" placeholder="The capital of France is"
+            {% if no_key %}disabled{% endif %}>{{ chat.prompt_text }}</textarea>
+</label>
+
+<div class="cmp-toolbar">
+  <label>API key
+    <select id="cmp-api-key" class="cmp-keyselect" {% if no_key %}disabled{% endif %}>
+      {% for k in keys %}
+      <option value="{{ k.id }}" data-prefix="{{ k.key_prefix }}" {% if k.id == selected_key_id %}selected{% endif %}>{{ k.name or "Unnamed key" }} ({{ k.key_prefix }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <span class="spacer"></span>
+  <div class="cmp-run-row">
+    <span class="cmp-run-hint">⌘/Ctrl&nbsp;+&nbsp;Enter</span>
+    <button id="cmp-stop-all" type="button" class="secondary" style="display:none;">Stop all</button>
+    <button id="cmp-run" type="button" {% if no_key %}disabled{% endif %}>Run all</button>
+  </div>
+</div>
+
+<div id="cmp-lanes" class="cmp-lanes"></div>
+
+<div class="cmp-add-row">
+  <button id="cmp-add" type="button" class="secondary" {% if no_key %}disabled{% endif %}>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Add model
+  </button>
+  <span class="cmp-add-hint" id="cmp-add-hint"></span>
+</div>
+
+{# Compare-run history (ACS-180). Mirrors the single-pane .wb-snapshots list
+   styling (defined in workbench.html, which includes this partial). Each entry
+   = one Run-all: timestamp, shared prompt (truncated), lane count, per-lane
+   model chips. Clicking "Restore" rebuilds the lanes from the saved config,
+   drops the stored completions back into each output, and restores the shared
+   prompt so the run can be inspected or re-run. Populated client-side from
+   GET /workbench/{id}/compare/snapshots. #}
+<details id="cmp-history" class="wb-snapshots cmp-history" hidden>
+  <summary><span id="cmp-history-summary"></span></summary>
+  <div class="snapshots-body">
+    <ul id="cmp-history-list"></ul>
+  </div>
+</details>
+
+{# Per-lane model picker (ACS-181). Same custom button+listbox widget as the
+   single-pane composer — a native <select> can't render the ACS-80/ACS-98
+   status chips ("Always on" / "Recently used" / "Needs startup (~Xmin)"), so
+   we clone this scaffold per lane and drive it with the shared init below.
+   The option buttons come from _model_option.html, the SAME partial single-pane
+   uses, so the two pickers can't drift. `.wb-select-*`/`.wb-policy-*` CSS lives
+   in workbench.html (this partial is included into it) and cascades in here. #}
+<template id="cmp-model-picker">
+  <div class="wb-select cmp-model-picker">
+    <button type="button" class="wb-select-trigger" aria-label="Model"
+            aria-haspopup="listbox" aria-expanded="false">
+      <span class="wb-select-label">—</span>
+      <span class="wb-policy wb-trigger-policy" hidden></span>
+      <svg class="wb-select-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div class="wb-select-menu" role="listbox" hidden>
+      {% for m in available_models %}
+      {% include "_model_option.html" %}
+      {% endfor %}
+    </div>
+    <input type="hidden" class="cmp-lane-model-value" value="{{ selected_model_id or '' }}">
+  </div>
+</template>
+
+{# Shared floating tooltip for logprob token alternatives. #}
+<div id="cmp-tt" class="cmp-tt" role="tooltip" aria-hidden="true"></div>
+
+<script id="cmp-config" type="application/json">{{ {
+  "chatId": chat.id|string,
+  "selectedModelId": selected_model_id or "",
+  "defaultMaxTokens": default_max_tokens,
+  "defaultTemperature": default_temperature,
+  "maxLanes": max_lanes,
+  "modelLabels": model_labels,
+  "noKey": no_key
+} | tojson }}</script>
+
+<script>
+(function () {
+  const cfg = JSON.parse(document.getElementById('cmp-config').textContent);
+  const chatId = cfg.chatId;
+  const lanesEl = document.getElementById('cmp-lanes');
+  const promptEl = document.getElementById('cmp-prompt');
+  const keySelect = document.getElementById('cmp-api-key');
+  const runBtn = document.getElementById('cmp-run');
+  const stopAllBtn = document.getElementById('cmp-stop-all');
+  const addBtn = document.getElementById('cmp-add');
+  const addHint = document.getElementById('cmp-add-hint');
+  const errorEl = document.getElementById('cmp-error');
+  const pickerTemplate = document.getElementById('cmp-model-picker');
+  const tooltipEl = document.getElementById('cmp-tt');
+
+  // ----- per-lane model picker -----------------------------------------
+  // Same custom button+listbox widget as single-pane (a native <select> can't
+  // render the ACS-80/ACS-98 status chips). Cloned per lane and driven here.
+  // Everything is class-scoped to the picker root — NO getElementById — so N
+  // cloned pickers don't collide on ids. The dataset contract
+  // (data-value / data-label / data-policy-label + child .wb-policy chip)
+  // mirrors single-pane's applySelection() so the two stay in lockstep.
+  //
+  // Outside-click / Escape dismissal is handled by ONE document-level listener
+  // (registered once below) that closes every open menu, rather than a pair of
+  // document listeners per lane — the per-lane approach would leak handlers on
+  // each add/remove/duplicate since they'd outlive the lane's removed DOM.
+  const openMenuClosers = new Set();  // close fns of every live lane picker
+  function initModelPicker(root) {
+    const trigger = root.querySelector('.wb-select-trigger');
+    const menu = root.querySelector('.wb-select-menu');
+    const label = root.querySelector('.wb-select-label');
+    const hidden = root.querySelector('.cmp-lane-model-value');
+    const triggerChip = root.querySelector('.wb-trigger-policy');
+
+    function applySelection(id) {
+      const options = menu.querySelectorAll('.wb-select-option');
+      let selectedLabel = '';
+      let selectedOpt = null;
+      options.forEach(function (opt) {
+        const isSel = opt.dataset.value === id;
+        opt.setAttribute('aria-selected', isSel ? 'true' : 'false');
+        if (isSel) { selectedLabel = opt.dataset.label || opt.dataset.value; selectedOpt = opt; }
+      });
+      if (!selectedLabel && options.length) {
+        // Stored id no longer in the registry → fall back to first option.
+        const first = options[0];
+        id = first.dataset.value;
+        selectedLabel = first.dataset.label || first.dataset.value;
+        first.setAttribute('aria-selected', 'true');
+        selectedOpt = first;
+      }
+      hidden.value = id;
+      label.textContent = selectedLabel;
+      // Mirror the picked option's status chip onto the trigger (matches single-pane).
+      if (triggerChip) {
+        if (selectedOpt && selectedOpt.dataset.policyLabel) {
+          const srcChip = selectedOpt.querySelector('.wb-policy');
+          let mod = 'wb-policy-needs-startup';
+          if (srcChip && srcChip.classList.contains('wb-policy-always-on')) mod = 'wb-policy-always-on';
+          else if (srcChip && srcChip.classList.contains('wb-policy-warm')) mod = 'wb-policy-warm';
+          triggerChip.textContent = selectedOpt.dataset.policyLabel;
+          triggerChip.className = 'wb-policy wb-trigger-policy ' + mod;
+          triggerChip.title = srcChip ? (srcChip.getAttribute('title') || '') : '';
+          triggerChip.hidden = false;
+        } else {
+          triggerChip.hidden = true;
+        }
+      }
+    }
+    function open() { menu.hidden = false; trigger.setAttribute('aria-expanded', 'true'); }
+    function close() { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+    // Register this picker's outside-click closer (see the single shared
+    // document listener below). No per-lane document listeners → no leak.
+    // Once the lane's DOM is removed the closer is a harmless no-op; it prunes
+    // itself from the Set lazily on the next document click/keydown, so the Set
+    // doesn't grow unbounded across add/remove churn either.
+    function closer(target) {
+      if (!document.contains(root)) { openMenuClosers.delete(closer); return; }
+      if (!root.contains(target)) close();
+    }
+    openMenuClosers.add(closer);
+
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (trigger.disabled) return;
+      if (menu.hidden) open(); else close();
+    });
+    menu.addEventListener('click', function (e) {
+      const btn = e.target.closest('.wb-select-option');
+      if (!btn) return;
+      applySelection(btn.dataset.value);
+      close();
+    });
+    // ACS-183: keyboard operability + ARIA-activedescendant via the shared
+    // helper defined in workbench.html (window.acsWireListboxKeys). Ids are
+    // generated per-picker inside the helper, so N cloned lanes don't collide.
+    if (window.acsWireListboxKeys) {
+      window.acsWireListboxKeys({
+        trigger: trigger,
+        menu: menu,
+        select: applySelection,
+        getValue: function () { return hidden.value; },
+      });
+    }
+
+    return {
+      get value() { return hidden.value; },
+      set value(v) { applySelection(v); },
+      set disabled(d) { trigger.disabled = d; },
+    };
+  }
+  // Single document-level dismissal for ALL lane pickers (no per-lane leak).
+  document.addEventListener('click', function (e) {
+    openMenuClosers.forEach(function (closeIfOutside) { closeIfOutside(e.target); });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') openMenuClosers.forEach(function (closeIfOutside) { closeIfOutside(null); });
+  });
+
+  // Per-lane state lives here keyed by a monotonic lane id. Each entry:
+  //   { id, root, els, controller, genId, finished, tokenList, accumulated }
+  // We never collapse N concurrent streams into shared globals — every
+  // lane owns its AbortController + accumulators.
+  const lanes = new Map();
+  let laneSeq = 0;
+
+  function showError(msg) { errorEl.textContent = msg; errorEl.style.display = ''; }
+  function clearError() { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+
+  // ----- logprob coloring ----------------------------------------------
+  // Token background colour comes from the shared window.acsLogprobColor
+  // (_logprobs_heatmap.html), so loom and compare share one hue ramp.
+  function fmtPct(logprob) {
+    const p = Math.exp(logprob);
+    if (!isFinite(p)) return '—';
+    return (p * 100).toFixed(p >= 0.1 ? 1 : 2) + '%';
+  }
+
+  // ----- lane construction ---------------------------------------------
+  function buildLane(initial) {
+    const id = ++laneSeq;
+    const init = initial || {};
+    const root = document.createElement('div');
+    root.className = 'cmp-lane';
+    root.dataset.laneId = String(id);
+
+    // Header: model picker + duplicate + remove.
+    const head = document.createElement('div');
+    head.className = 'cmp-lane-head';
+    // Custom listbox picker (parity with single-pane, with status chips).
+    const pickerRoot = pickerTemplate.content.firstElementChild.cloneNode(true);
+    const modelSel = initModelPicker(pickerRoot);
+    // Default to the session's selected model unless cloning an existing lane.
+    modelSel.value = (init.model != null) ? init.model : cfg.selectedModelId;
+    if (cfg.noKey) modelSel.disabled = true;
+    const dupBtn = document.createElement('button');
+    dupBtn.type = 'button';
+    dupBtn.className = 'cmp-lane-btn';
+    dupBtn.title = 'Duplicate lane (same config — use for n>1 samples)';
+    dupBtn.setAttribute('aria-label', 'Duplicate lane');
+    dupBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const rmBtn = document.createElement('button');
+    rmBtn.type = 'button';
+    rmBtn.className = 'cmp-lane-btn danger';
+    rmBtn.title = 'Remove lane';
+    rmBtn.setAttribute('aria-label', 'Remove lane');
+    rmBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    head.appendChild(pickerRoot);
+    head.appendChild(dupBtn);
+    head.appendChild(rmBtn);
+
+    // Collapsible sampling controls.
+    const params = document.createElement('details');
+    params.className = 'cmp-params';
+    const summary = document.createElement('summary');
+    // Chevron + label so the collapsible reads as a real control, not static
+    // text (ACS-181). Chevron rotates on [open] via CSS.
+    // The disclosure chevron is the app-global `details summary::before`
+    // (base.html) that rotates on [open] — we don't add our own, so there's
+    // exactly one caret. This summary just carries the label text + control
+    // styling below.
+    summary.innerHTML = '<span class="cmp-params-summary-text">Sampling parameters</span>';
+    params.appendChild(summary);
+    const pbody = document.createElement('div');
+    pbody.className = 'cmp-params-body';
+    // [label, key, type, value, attrs, help]
+    // `help` renders as a .term-help tooltip (base.html, ACS-257) — same
+    // plain-English copy as the single-pane sampling panel.
+    const fields = [
+      ['Max tokens', 'max_tokens', 'number', (init.max_tokens != null ? init.max_tokens : cfg.defaultMaxTokens), { min: 1, max: 4000, step: 1 },
+        'Upper limit on how many tokens this lane can generate. Generation can stop earlier.'],
+      ['Temperature', 'temperature', 'number', (init.temperature != null ? init.temperature : cfg.defaultTemperature), { min: 0, max: 100, step: 0.1 },
+        "How random sampling is. 0 always picks the most likely token; 1 samples the model's raw probabilities; higher values get increasingly chaotic."],
+      ['Top p', 'top_p', 'number', (init.top_p != null ? init.top_p : 1.0), { min: 0, max: 1, step: 0.05 },
+        'Nucleus sampling: sample only from the smallest set of tokens whose probabilities add up to this value. 1 = off.'],
+      ['Top k (-1 off)', 'top_k', 'number', (init.top_k != null ? init.top_k : -1), { min: -1, max: 1000, step: 1 },
+        'Only the k most likely next tokens can be picked: k = 1 always takes the single top token, k = 50 chooses among the top 50. -1 = no limit.'],
+      ['Min p', 'min_p', 'number', (init.min_p != null ? init.min_p : 0.0), { min: 0, max: 1, step: 0.01 },
+        'Drops long-shot tokens relative to the best one: at 0.1, any token less than 10% as likely as the top token is excluded. 0 = off.'],
+      ['Presence pen.', 'presence_penalty', 'number', (init.presence_penalty != null ? init.presence_penalty : 0.0), { min: -2, max: 2, step: 0.1 },
+        'Penalises every token that has already appeared at least once — positive values nudge the model toward new words and topics.'],
+      ['Frequency pen.', 'frequency_penalty', 'number', (init.frequency_penalty != null ? init.frequency_penalty : 0.0), { min: -2, max: 2, step: 0.1 },
+        'Penalises tokens more the more often they have already appeared — positive values reduce repetition.'],
+      ['Repetition pen.', 'repetition_penalty', 'number', (init.repetition_penalty != null ? init.repetition_penalty : 1.0), { min: 0, max: 2, step: 0.05 },
+        'Scales down the score of already-seen tokens. 1 = off; above 1 discourages repeats, below 1 encourages them.'],
+      ['Seed (blank=random)', 'seed', 'number', (init.seed != null ? init.seed : ''), { step: 1 },
+        'Makes sampling reproducible: the same prompt, settings and seed give the same output. Empty = different result each run.'],
+      ['Stop (one string)', 'stop', 'text', (init.stop != null ? init.stop : ''), {},
+        'When the model produces this exact text, generation stops there (the stop text itself is not included).'],
+    ];
+    const inputs = {};
+    for (const [labelText, key, type, value, attrs, help] of fields) {
+      const lab = document.createElement('label');
+      if (help) {
+        const term = document.createElement('span');
+        term.className = 'term-help';
+        term.tabIndex = 0;
+        term.dataset.help = help;
+        term.textContent = labelText;
+        lab.appendChild(term);
+      } else {
+        lab.textContent = labelText;
+      }
+      const inp = document.createElement('input');
+      inp.type = type;
+      inp.className = (type === 'number') ? 'cmp-num' : 'cmp-text';
+      inp.value = value;
+      for (const [a, v] of Object.entries(attrs)) inp.setAttribute(a, v);
+      // The HTML `max`/`min` attrs only bound the spinner arrows + `:invalid`
+      // styling — a typed value can still exceed them (e.g. temperature 101).
+      // The server clamps anyway, but clamp on commit so what you see is what
+      // runs. Skips fields with no bound (seed) and text fields (stop).
+      if (type === 'number' && (attrs.min != null || attrs.max != null)) {
+        inp.addEventListener('change', function () {
+          if (inp.value === '') return;
+          let n = parseFloat(inp.value);
+          if (Number.isNaN(n)) return;
+          if (attrs.min != null) n = Math.max(attrs.min, n);
+          if (attrs.max != null) n = Math.min(attrs.max, n);
+          inp.value = String(n);
+        });
+      }
+      lab.appendChild(inp);
+      pbody.appendChild(lab);
+      inputs[key] = inp;
+    }
+    // Logprobs toggle + count.
+    const lpRow = document.createElement('div');
+    lpRow.className = 'cmp-logprobs-row';
+    const lpCheckLabel = document.createElement('label');
+    lpCheckLabel.className = 'cmp-check';
+    const lpCheck = document.createElement('input');
+    lpCheck.type = 'checkbox';
+    lpCheck.checked = !!init.logprobsOn;
+    lpCheckLabel.appendChild(lpCheck);
+    lpCheckLabel.appendChild(document.createTextNode('Heatmap'));
+    const lpCount = document.createElement('input');
+    lpCount.type = 'number';
+    lpCount.className = 'cmp-num cmp-logprobs-count';
+    lpCount.min = 1; lpCount.max = 20; lpCount.step = 1;
+    lpCount.value = (init.logprobsCount != null ? init.logprobsCount : 5);
+    lpCount.disabled = !lpCheck.checked;
+    lpCheck.addEventListener('change', function () { lpCount.disabled = !lpCheck.checked; });
+    lpRow.appendChild(lpCheckLabel);
+    lpRow.appendChild(lpCount);
+    pbody.appendChild(lpRow);
+    params.appendChild(pbody);
+
+    // Output area.
+    const output = document.createElement('div');
+    output.className = 'cmp-output';
+    output.innerHTML = '<span class="cmp-placeholder">Run to stream a completion…</span>';
+
+    // Footer: status + token count + stop/copy.
+    const foot = document.createElement('div');
+    foot.className = 'cmp-lane-foot';
+    const status = document.createElement('span');
+    status.className = 'cmp-lane-status';
+    status.textContent = 'idle';
+    const count = document.createElement('span');
+    count.className = 'cmp-lane-count';
+    count.textContent = '0 tok';
+    const stopBtn = document.createElement('button');
+    stopBtn.type = 'button';
+    stopBtn.className = 'cmp-foot-btn danger';
+    stopBtn.textContent = 'Stop';
+    stopBtn.hidden = true;
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'cmp-foot-btn';
+    copyBtn.textContent = 'Copy';
+    const copied = document.createElement('span');
+    copied.className = 'cmp-copied';
+    copied.textContent = 'copied';
+    foot.appendChild(status);
+    foot.appendChild(count);
+    foot.appendChild(stopBtn);
+    foot.appendChild(copyBtn);
+    foot.appendChild(copied);
+
+    root.appendChild(head);
+    root.appendChild(params);
+    root.appendChild(output);
+    root.appendChild(foot);
+
+    const lane = {
+      id, root,
+      els: { modelSel, output, status, count, stopBtn, copyBtn, copied, inputs, lpCheck, lpCount },
+      controller: null,
+      genId: null,
+      finished: false,
+      // Plain-text path: characters streamed when logprobs is off.
+      plainText: '',
+      // Logprobs path: list of { token, logprob, top } across chunks.
+      tokenList: [],
+      coloredMode: false,
+      t0: 0,
+    };
+    lanes.set(id, lane);
+
+    dupBtn.addEventListener('click', function () { duplicateLane(lane); });
+    rmBtn.addEventListener('click', function () { removeLane(lane); });
+    stopBtn.addEventListener('click', function () { stopLane(lane); });
+    copyBtn.addEventListener('click', function () { copyLane(lane); });
+
+    return lane;
+  }
+
+  function laneParams(lane) {
+    const i = lane.els.inputs;
+    const numOr = function (el, dflt) {
+      const v = parseFloat(el.value);
+      return isFinite(v) ? v : dflt;
+    };
+    const seedRaw = i.seed.value.trim();
+    const stopRaw = i.stop.value;  // do NOT trim — leading/trailing space may be meaningful
+    const out = {
+      model: lane.els.modelSel.value,
+      max_tokens: Math.round(numOr(i.max_tokens, cfg.defaultMaxTokens)),
+      temperature: numOr(i.temperature, cfg.defaultTemperature),
+      top_p: numOr(i.top_p, 1.0),
+      top_k: Math.round(numOr(i.top_k, -1)),
+      min_p: numOr(i.min_p, 0.0),
+      presence_penalty: numOr(i.presence_penalty, 0.0),
+      frequency_penalty: numOr(i.frequency_penalty, 0.0),
+      repetition_penalty: numOr(i.repetition_penalty, 1.0),
+      seed: seedRaw === '' ? null : Math.round(parseFloat(seedRaw)),
+      stop: stopRaw === '' ? null : stopRaw,
+      logprobs: lane.els.lpCheck.checked
+        ? Math.max(1, Math.min(20, Math.round(parseFloat(lane.els.lpCount.value) || 5)))
+        : null,
+    };
+    return out;
+  }
+
+  function duplicateLane(lane) {
+    if (lanes.size >= cfg.maxLanes) { flashAddHint(); return; }
+    const p = laneParams(lane);
+    const clone = buildLane({
+      model: p.model,
+      max_tokens: p.max_tokens,
+      temperature: p.temperature,
+      top_p: p.top_p,
+      top_k: p.top_k,
+      min_p: p.min_p,
+      presence_penalty: p.presence_penalty,
+      frequency_penalty: p.frequency_penalty,
+      repetition_penalty: p.repetition_penalty,
+      seed: lane.els.inputs.seed.value,  // keep blank-as-random intact
+      stop: lane.els.inputs.stop.value,
+      logprobsOn: lane.els.lpCheck.checked,
+      logprobsCount: lane.els.lpCount.value,
+    });
+    lane.root.after(clone.root);
+    updateLaneControls();
+  }
+
+  function removeLane(lane) {
+    if (lanes.size <= 1) return;  // keep at least one lane
+    stopLane(lane);
+    lanes.delete(lane.id);
+    lane.root.remove();
+    updateLaneControls();
+  }
+
+  // Disable remove buttons when only one lane left; gray out Add at the cap.
+  function updateLaneControls() {
+    const only = lanes.size <= 1;
+    lanes.forEach(function (l) {
+      const rm = l.root.querySelector('.cmp-lane-btn.danger');
+      if (rm) rm.disabled = only;
+    });
+    const atCap = lanes.size >= cfg.maxLanes;
+    addBtn.disabled = atCap || cfg.noKey;
+    addHint.textContent = atCap ? ('Maximum of ' + cfg.maxLanes + ' lanes.') : '';
+  }
+  function flashAddHint() {
+    addHint.textContent = 'Maximum of ' + cfg.maxLanes + ' lanes.';
+    setTimeout(function () { if (lanes.size < cfg.maxLanes) addHint.textContent = ''; }, 2000);
+  }
+
+  // ----- per-lane rendering --------------------------------------------
+  function setLaneStatus(lane, text, kind) {
+    lane.els.status.textContent = text;
+    lane.els.status.className = 'cmp-lane-status' +
+      (kind === 'error' ? ' is-error' : (kind === 'done' ? ' is-done' : ''));
+  }
+  function setLaneCount(lane, n) { lane.els.count.textContent = n + ' tok'; }
+
+  // Plain streamed text path.
+  function appendPlain(lane, delta) {
+    if (!lane.plainEl) {
+      lane.els.output.innerHTML = '';
+      lane.plainEl = document.createElement('span');
+      lane.els.output.appendChild(lane.plainEl);
+    }
+    lane.plainText += delta;
+    lane.plainEl.textContent = lane.plainText;
+    lane.els.output.scrollTop = lane.els.output.scrollHeight;
+  }
+  // Replay (resume) path — also plain text.
+  function setReplay(lane, text) {
+    lane.plainText = '';
+    lane.plainEl = null;
+    lane.els.output.innerHTML = '';
+    appendPlain(lane, text);
+  }
+
+  // Logprobs path: append colored token spans from a chunk's logprobs.
+  function appendLogprobTokens(lane, lp) {
+    if (!lane.coloredMode) {
+      lane.coloredMode = true;
+      lane.els.output.innerHTML = '';
+    }
+    const toks = lp.tokens || [];
+    const tlp = lp.token_logprobs || [];
+    const tops = lp.top_logprobs || [];
+    for (let i = 0; i < toks.length; i++) {
+      const logprob = (typeof tlp[i] === 'number') ? tlp[i] : NaN;
+      const span = document.createElement('span');
+      span.className = 'cmp-tok';
+      // Render whitespace/newlines literally so the layout matches the text.
+      span.textContent = toks[i];
+      // Shared colour ramp (window.acsLogprobColor from _logprobs_heatmap.html)
+      // so loom and compare colour tokens identically. Compare keeps its own
+      // incremental rendering + hover tooltip (its multi-lane UX differs from
+      // loom's tree click-popover).
+      span.style.background = window.acsLogprobColor(logprob);
+      // Stash alternatives for the hover tooltip.
+      const alt = tops[i] || null;
+      if (alt) span.__alt = { chosen: toks[i], chosenLogprob: logprob, top: alt };
+      lane.tokenList.push({ token: toks[i], logprob: logprob });
+      lane.els.output.appendChild(span);
+    }
+    lane.els.output.scrollTop = lane.els.output.scrollHeight;
+  }
+
+  // Shared hover tooltip for token alternatives (delegated on lanesEl).
+  lanesEl.addEventListener('mouseover', function (e) {
+    const span = e.target.closest('.cmp-tok');
+    if (!span || !span.__alt) { return; }
+    const a = span.__alt;
+    const entries = Object.entries(a.top).sort(function (x, y) { return y[1] - x[1]; });
+    let html = '';
+    for (const [tok, lpv] of entries) {
+      const isChosen = (tok === a.chosen);
+      html += '<div class="cmp-tt-row' + (isChosen ? ' is-chosen' : '') + '">' +
+        '<span class="cmp-tt-tok">' + escapeHtml(displayToken(tok)) + '</span>' +
+        '<span class="cmp-tt-p">' + fmtPct(lpv) + '</span></div>';
+    }
+    tooltipEl.innerHTML = html;
+    tooltipEl.classList.add('show');
+    positionTooltip(span);
+  });
+  lanesEl.addEventListener('mouseout', function (e) {
+    const span = e.target.closest('.cmp-tok');
+    if (span) tooltipEl.classList.remove('show');
+  });
+  function positionTooltip(span) {
+    const r = span.getBoundingClientRect();
+    tooltipEl.style.left = '0px'; tooltipEl.style.top = '0px';
+    const tw = tooltipEl.offsetWidth, th = tooltipEl.offsetHeight;
+    let left = r.left;
+    let top = r.bottom + 6;
+    if (left + tw > window.innerWidth - 8) left = window.innerWidth - tw - 8;
+    if (left < 8) left = 8;
+    if (top + th > window.innerHeight - 8) top = r.top - th - 6;  // flip above
+    tooltipEl.style.left = left + 'px';
+    tooltipEl.style.top = Math.max(8, top) + 'px';
+  }
+  function displayToken(tok) {
+    // vLLM tokens often use ▁ for spaces / contain \n; show them readably.
+    return tok.replace(/▁/g, '·').replace(/\n/g, '\\n').replace(/\t/g, '\\t') || '(empty)';
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function laneText(lane) {
+    if (lane.coloredMode) return lane.tokenList.map(function (t) { return t.token; }).join('');
+    return lane.plainText;
+  }
+  async function copyLane(lane) {
+    const text = laneText(lane);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+    }
+    lane.els.copied.classList.add('show');
+    setTimeout(function () { lane.els.copied.classList.remove('show'); }, 1200);
+  }
+
+  // ----- streaming ------------------------------------------------------
+  function setLaneRunning(lane, on) {
+    lane.els.stopBtn.hidden = !on;
+    lane.els.modelSel.disabled = on || cfg.noKey;
+  }
+
+  async function stopLane(lane) {
+    if (!lane.genId || lane.finished) {
+      // Not yet launched (or already done) — just abort any local reader.
+      if (lane.controller) lane.controller.abort();
+      return;
+    }
+    lane.els.stopBtn.disabled = true;
+    try {
+      await fetch('/workbench/' + chatId + '/generations/' + lane.genId + '/cancel',
+        { method: 'POST', credentials: 'same-origin' });
+    } catch (_) {
+      if (lane.controller) lane.controller.abort();
+    } finally {
+      lane.els.stopBtn.disabled = false;
+    }
+  }
+
+  function resetLaneForRun(lane) {
+    lane.finished = false;
+    lane.genId = null;
+    lane.controller = null;
+    lane.plainText = '';
+    lane.plainEl = null;
+    lane.tokenList = [];
+    lane.coloredMode = false;
+    lane.els.output.innerHTML = '<span class="cmp-placeholder">Waiting for tokens…</span>';
+    lane.els.output.classList.remove('cmp-cleared');
+    lane.root.classList.remove('is-failed');
+    setLaneCount(lane, 0);
+    setLaneStatus(lane, 'starting…', null);
+  }
+
+  function finishLane(lane, kind, statusText) {
+    lane.finished = true;
+    // Track how the lane ended so the run-all snapshot can flag partial/failed
+    // lanes: kind === 'done' → clean; 'error' → failed; null → stopped/cancelled.
+    lane.finishKind = kind || 'stopped';
+    setLaneRunning(lane, false);
+    if (kind) setLaneStatus(lane, statusText, kind);
+    if (kind === 'error') lane.root.classList.add('is-failed');
+    lane.controller = null;
+  }
+
+  // Adapted from workbench.html's subscribeToGeneration: same fetch +
+  // ReadableStream frame parser, but scoped to ONE lane object (no shared
+  // globals) so N of these run concurrently.
+  async function streamLane(lane) {
+    const t0 = performance.now();
+    lane.t0 = t0;
+    lane.controller = new AbortController();
+    setLaneRunning(lane, true);
+    lane.els.stopBtn.disabled = false;
+
+    let nTokens = 0;
+    let replayApplied = false;
+    let sawTokens = false;
+
+    try {
+      const resp = await fetch(
+        '/workbench/' + chatId + '/generations/' + lane.genId + '/events',
+        { method: 'GET', credentials: 'same-origin', signal: lane.controller.signal }
+      );
+      if (!resp.ok) {
+        let msg = 'Stream failed (' + resp.status + ')';
+        try {
+          const j = await resp.json();
+          if (j.error && j.error.message) msg = j.error.message;
+        } catch (_) {}
+        finishLane(lane, 'error', msg);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let evName = null;
+          const dataLines = [];
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event: ')) evName = line.slice(7).trim();
+            else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+          }
+          if (dataLines.length === 0) continue;
+          const payload = dataLines.join('\n').trim();
+          if (payload === '[DONE]' || !payload) continue;
+
+          if (evName === 'replay') {
+            let r;
+            try { r = JSON.parse(payload); } catch (_) { continue; }
+            if (typeof r.text !== 'string') continue;
+            if (!replayApplied) {
+              // Resume path: only accumulated plain text available (no
+              // logprobs). Fall back to plain rendering, per the brief.
+              setReplay(lane, r.text);
+              replayApplied = true;
+              if (r.text.length > 0) { sawTokens = true; setLaneStatus(lane, 'streaming…', null); }
+            }
+            continue;
+          }
+
+          if (evName === 'status') {
+            let st;
+            try { st = JSON.parse(payload); } catch (_) { continue; }
+            const phase = st.phase || '';
+            if (phase === 'cold_boot') {
+              setLaneStatus(lane, 'warming up model… (~30s–2min)', null);
+            } else if (phase === 'sending') {
+              setLaneStatus(lane, 'sending…', null);
+            } else if (phase) {
+              setLaneStatus(lane, phase, null);
+            }
+            continue;
+          }
+
+          if (evName === 'error') {
+            let st;
+            try { st = JSON.parse(payload); } catch (_) { st = {}; }
+            finishLane(lane, 'error', st.message || 'Upstream error');
+            continue;
+          }
+
+          if (evName === 'done') {
+            let st;
+            try { st = JSON.parse(payload); } catch (_) { st = {}; }
+            const elapsed = (performance.now() - t0) / 1000;
+            const completion = (st.usage && typeof st.usage.completion_tokens === 'number')
+              ? st.usage.completion_tokens : nTokens;
+            if (st.status === 'completed') {
+              setLaneCount(lane, completion);
+              finishLane(lane, 'done',
+                completion + ' tok · ' + elapsed.toFixed(1) + 's' +
+                (elapsed > 0 ? ' · ' + (completion / elapsed).toFixed(0) + ' tok/s' : ''));
+            } else if (st.status === 'cancelled') {
+              finishLane(lane, null, null);
+              setLaneStatus(lane, 'cancelled · ' + elapsed.toFixed(1) + 's', null);
+            } else if (st.status === 'failed') {
+              finishLane(lane, 'error', st.error_message || 'Generation failed');
+            } else {
+              finishLane(lane, 'error', 'ended: ' + (st.status || '?'));
+            }
+            continue;
+          }
+
+          // Unnamed data frame → raw completion chunk.
+          let obj;
+          try { obj = JSON.parse(payload); } catch (_) { continue; }
+          const choices = obj.choices || [];
+          const ch = choices[0];
+          if (ch) {
+            if (!sawTokens) { sawTokens = true; setLaneStatus(lane, 'streaming…', null); }
+            // Logprobs present + lane wants coloring → token-by-token.
+            if (ch.logprobs && Array.isArray(ch.logprobs.tokens) && lane.els.lpCheck.checked) {
+              appendLogprobTokens(lane, ch.logprobs);
+              nTokens = lane.tokenList.length;
+            } else if (typeof ch.text === 'string' && ch.text) {
+              appendPlain(lane, ch.text);
+              nTokens += 1;
+            }
+            setLaneCount(lane, nTokens);
+          }
+          if (obj.usage && obj.usage.completion_tokens) {
+            nTokens = obj.usage.completion_tokens;
+            setLaneCount(lane, nTokens);
+          }
+        }
+      }
+      // Stream closed without a `done` frame — be defensive.
+      if (!lane.finished) finishLane(lane, null, sawTokens ? 'stream ended' : 'no output');
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        if (!lane.finished) finishLane(lane, null, 'stopped');
+      } else {
+        finishLane(lane, 'error', 'Network error: ' + err.message);
+      }
+    }
+  }
+
+  // ----- run all --------------------------------------------------------
+  function setRunningAll(on) {
+    runBtn.style.display = on ? 'none' : '';
+    stopAllBtn.style.display = on ? '' : 'none';
+    promptEl.readOnly = on;
+  }
+
+  let runningCount = 0;
+  function trackLanePromise(p) {
+    runningCount += 1;
+    p.finally(function () {
+      runningCount -= 1;
+      if (runningCount <= 0) setRunningAll(false);
+    });
+  }
+
+  async function runAll() {
+    if (cfg.noKey) return;
+    clearError();
+    const prompt = promptEl.value;
+    // ACS-185: catch an empty / whitespace-only shared prompt client-side
+    // before firing. Without this, each lane's request 400s server-side with
+    // "either `prompt` or `prompt_embeds` must be provided and non-empty".
+    // The 400 is a correct backstop; this is the friendly inline path.
+    if (!prompt.trim()) {
+      showError('Enter a prompt to run.');
+      promptEl.focus();
+      return;
+    }
+    const laneList = Array.from(lanes.values());  // DOM order preserved by Map insertion
+    if (!laneList.length) return;
+
+    const payloadLanes = laneList.map(function (l) { return laneParams(l); });
+    laneList.forEach(resetLaneForRun);
+    setRunningAll(true);
+
+    let data;
+    try {
+      const resp = await fetch('/workbench/' + chatId + '/compare', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: prompt,
+          api_key_id: keySelect ? keySelect.value : '',
+          lanes: payloadLanes,
+        }),
+      });
+      if (!resp.ok) {
+        let msg = 'Request failed (' + resp.status + ')';
+        let code = null;
+        try {
+          const j = await resp.json();
+          if (j.error && j.error.message) msg = j.error.message;
+          if (j.error && j.error.code) code = j.error.code;
+        } catch (_) {}
+        if (code === 'no_key') {
+          msg = 'No active API key — create one at /dashboard.';
+        }
+        laneList.forEach(function (l) { finishLane(l, 'error', 'not started'); });
+        setRunningAll(false);
+        showError(msg);
+        return;
+      }
+      data = await resp.json();
+    } catch (err) {
+      laneList.forEach(function (l) { finishLane(l, 'error', 'not started'); });
+      setRunningAll(false);
+      showError('Network error: ' + err.message);
+      return;
+    }
+
+    const respLanes = (data && Array.isArray(data.lanes)) ? data.lanes : [];
+    // Map response back by index → the lane in laneList order. Collect the
+    // streaming promises so we can persist a combined snapshot once every lane
+    // has settled (ACS-180).
+    const streamPromises = [];
+    let anyStarted = false;
+    respLanes.forEach(function (entry) {
+      const lane = laneList[entry.index];
+      if (!lane) return;
+      if (entry.error) {
+        finishLane(lane, 'error', (entry.error.message) || 'lane failed');
+        return;
+      }
+      if (typeof entry.generation_id !== 'string') {
+        finishLane(lane, 'error', 'no generation id');
+        return;
+      }
+      lane.genId = entry.generation_id;
+      anyStarted = true;
+      const p = streamLane(lane);
+      streamPromises.push(p);
+      trackLanePromise(p);
+    });
+
+    // Any lane that got no response entry at all → mark failed.
+    laneList.forEach(function (l, i) {
+      const got = respLanes.some(function (e) { return e.index === i; });
+      if (!got) finishLane(l, 'error', 'no response for lane');
+    });
+
+    if (runningCount === 0) setRunningAll(false);
+
+    // After every lane finishes streaming, save the run as one snapshot. Only
+    // when at least one lane actually started — a fully-rejected batch (no_key,
+    // all-unknown-model) writes nothing.
+    if (anyStarted) {
+      Promise.allSettled(streamPromises).then(function () {
+        saveCompareSnapshot(prompt, laneList);
+      });
+    }
+  }
+
+  // ----- compare-run snapshots (ACS-180) --------------------------------
+  const historyEl = document.getElementById('cmp-history');
+  const historyListEl = document.getElementById('cmp-history-list');
+  const historySummaryEl = document.getElementById('cmp-history-summary');
+
+  function laneSnapshotPayload(lane) {
+    // The client is authoritative for both the sampling params (not stored on
+    // the ChatGeneration row) and the completion text the user actually saw.
+    const p = laneParams(lane);
+    p.completion_text = laneText(lane);
+    p.cancelled = (lane.finishKind && lane.finishKind !== 'done');
+    delete p.logprobs;  // not persisted in the snapshot lane shape
+    return p;
+  }
+
+  async function saveCompareSnapshot(prompt, laneList) {
+    const payloadLanes = laneList.map(laneSnapshotPayload);
+    if (!payloadLanes.length) return;
+    try {
+      const resp = await fetch('/workbench/' + chatId + '/compare/snapshots', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: prompt, lanes: payloadLanes }),
+      });
+      if (resp.ok) loadHistory();
+    } catch (_) { /* history is best-effort; never block the UI */ }
+  }
+
+  function truncate(s, n) {
+    s = (s == null) ? '' : String(s);
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  }
+
+  function modelLabelFor(id) {
+    return (cfg.modelLabels && cfg.modelLabels[id]) || id || '—';
+  }
+
+  function renderHistory(snapshots) {
+    historyListEl.innerHTML = '';
+    if (!snapshots || !snapshots.length) {
+      historyEl.hidden = true;
+      return;
+    }
+    historyEl.hidden = false;
+    const n = snapshots.length;
+    historySummaryEl.textContent =
+      n + ' compare run' + (n === 1 ? '' : 's') +
+      ' — click Restore to reload a run’s prompt, models and outputs';
+    snapshots.forEach(function (snap) {
+      const li = document.createElement('li');
+      const det = document.createElement('details');
+      det.className = 'wb-snap-item';
+
+      const summary = document.createElement('summary');
+      summary.className = 'cmp-hist-summary';
+      const ts = document.createElement('span');
+      ts.className = 'cmp-hist-ts';
+      ts.textContent = new Date(snap.ts).toLocaleString();
+      const pr = document.createElement('span');
+      pr.className = 'cmp-hist-prompt';
+      pr.textContent = truncate(snap.prompt, 80) || '(empty prompt)';
+      const nl = document.createElement('span');
+      nl.className = 'cmp-hist-nlanes';
+      nl.textContent = snap.n_lanes + ' lane' + (snap.n_lanes === 1 ? '' : 's');
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.className = 'ghost small cmp-hist-restore';
+      restore.textContent = 'Restore';
+      restore.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        restoreSnapshot(snap);
+      });
+      summary.appendChild(ts);
+      summary.appendChild(pr);
+      summary.appendChild(nl);
+      summary.appendChild(restore);
+      det.appendChild(summary);
+
+      const body = document.createElement('div');
+      body.className = 'wb-snap-body';
+      const chips = document.createElement('div');
+      chips.className = 'cmp-hist-chips';
+      (snap.lanes || []).forEach(function (lane) {
+        const chip = document.createElement('span');
+        chip.className = 'cmp-hist-chip';
+        chip.textContent = modelLabelFor(lane.model) + (lane.cancelled ? ' (partial)' : '');
+        chips.appendChild(chip);
+      });
+      body.appendChild(chips);
+      det.appendChild(body);
+
+      li.appendChild(det);
+      historyListEl.appendChild(li);
+    });
+  }
+
+  async function loadHistory() {
+    try {
+      const resp = await fetch('/workbench/' + chatId + '/compare/snapshots', {
+        credentials: 'same-origin',
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      renderHistory(data && data.snapshots);
+    } catch (_) { /* best-effort */ }
+  }
+
+  function restoreSnapshot(snap) {
+    // 1. Restore the shared prompt.
+    promptEl.value = snap.prompt || '';
+    // 2. Rebuild the lanes from the saved config, then drop each stored
+    //    completion back into the lane output (read-only view of the run — the
+    //    user can re-run to regenerate).
+    lanes.forEach(function (l) { l.root.remove(); });
+    lanes.clear();
+    (snap.lanes || []).forEach(function (laneCfg) {
+      const lane = buildLane({
+        model: laneCfg.model,
+        max_tokens: laneCfg.max_tokens,
+        temperature: laneCfg.temperature,
+        top_p: laneCfg.top_p,
+        top_k: laneCfg.top_k,
+        min_p: laneCfg.min_p,
+        presence_penalty: laneCfg.presence_penalty,
+        frequency_penalty: laneCfg.frequency_penalty,
+        repetition_penalty: laneCfg.repetition_penalty,
+        seed: (laneCfg.seed == null ? '' : laneCfg.seed),
+        stop: (laneCfg.stop == null ? '' : laneCfg.stop),
+      });
+      lanesEl.appendChild(lane.root);
+      const text = laneCfg.completion_text || '';
+      if (text) {
+        setReplay(lane, text);  // same plain-text render path as streaming
+        setLaneStatus(lane, laneCfg.cancelled ? 'restored (partial)' : 'restored', 'done');
+      } else {
+        setLaneStatus(lane, 'restored', 'done');
+      }
+    });
+    updateLaneControls();
+    lanesEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function stopAll() {
+    lanes.forEach(function (l) { if (!l.finished) stopLane(l); });
+  }
+
+  // ----- wiring ---------------------------------------------------------
+  runBtn.addEventListener('click', runAll);
+  stopAllBtn.addEventListener('click', stopAll);
+  addBtn.addEventListener('click', function () {
+    if (lanes.size >= cfg.maxLanes) { flashAddHint(); return; }
+    const lane = buildLane({});
+    lanesEl.appendChild(lane.root);
+    updateLaneControls();
+  });
+
+  // Cmd/Ctrl+Enter triggers Run all — but only while the compare pane is the
+  // active mode, so it doesn't fire from the single-pane composer sharing the
+  // same page shell.
+  document.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      const pane = lanesEl.closest('[data-mode-pane]');
+      if (pane && pane.hidden) return;
+      e.preventDefault();
+      if (!runBtn.disabled && runBtn.style.display !== 'none') runAll();
+    }
+  });
+
+  // Seed with two lanes by default.
+  if (!cfg.noKey) {
+    lanesEl.appendChild(buildLane({}).root);
+    lanesEl.appendChild(buildLane({}).root);
+  } else {
+    // Still show one inert lane so the layout reads, but it can't run.
+    lanesEl.appendChild(buildLane({}).root);
+  }
+  updateLaneControls();
+
+  // Load any saved compare-run snapshots for this session (ACS-180).
+  loadHistory();
+})();
+</script>

@@ -1,0 +1,37 @@
+{# Left-rail page tree for the multi-page /tutorial site.
+
+   Inputs (provided by the route):
+     nav          — list[NavEntry]    the editorial order, defined in docs_build.py
+     current_slug — str               the slug of the page being rendered
+                                       (e.g. "overview", "examples/logprobs"),
+                                       used to mark the active link
+
+   All links are public-safe — none of them point to authed-only routes,
+   per the ACS-68 / PR-36 finding that we must never render
+   /dashboard /workbench /usage links in an unauthed view.
+#}
+<nav>
+  <div class="nav-section">Tutorial</div>
+  <ul>
+    {% for entry in nav %}
+      {# Canonical URL for each top-level entry. Overview lives at /tutorial
+         (no slug); everything else at /tutorial/<slug>. #}
+      {% set top_url = "/tutorial" if entry.slug == "overview" else "/tutorial/" ~ entry.slug %}
+      {% set is_active = (current_slug == entry.slug) %}
+      <li>
+        <a href="{{ top_url }}"{% if is_active %} class="active"{% endif %}>{{ entry.title }}</a>
+        {% if entry.children %}
+          <ul>
+            {% for child in entry.children %}
+              {% set child_url = "/tutorial/" ~ child.slug %}
+              {% set child_active = (current_slug == child.slug) %}
+              <li>
+                <a href="{{ child_url }}"{% if child_active %} class="active"{% endif %}>{{ child.title }}</a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</nav>

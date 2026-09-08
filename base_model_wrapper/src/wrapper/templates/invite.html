@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Accept invitation — ACS Infra{% endblock %}
+{% block content %}
+<h1>Accept invitation</h1>
+<p class="lead" style="margin-bottom: 2rem;">
+  You've been invited to create an account on ACS Infra.
+  Complete the form below to set up your account.
+</p>
+
+{% if error %}<p class="error" style="max-width: 420px;">{{ error }}</p>{% endif %}
+
+<form action="/invite/{{ token }}" method="post">
+  <label>Email
+    <input type="email" name="email" required autofocus value="{{ email or '' }}"
+           placeholder="{% if suggested_email %}{{ suggested_email }}{% else %}you@example.com{% endif %}">
+  </label>
+  {% if suggested_email %}
+  <p class="muted" style="margin-top: -0.5rem; font-size: 0.85rem;">
+    This invite was addressed to <code>{{ suggested_email }}</code>. You may sign up with any email you prefer.
+  </p>
+  {% endif %}
+  <label>Password
+    <input type="password" name="password" required minlength="8" maxlength="72">
+  </label>
+  <p class="muted" style="margin-top: -0.5rem; font-size: 0.85rem;">8–72 characters.</p>
+  <label>Confirm password
+    <input type="password" name="confirm_password" required minlength="8" maxlength="72">
+  </label>
+  <label><span>Name <span class="muted">(optional)</span></span>
+    <input type="text" name="name" maxlength="120" value="{{ name or '' }}">
+  </label>
+  <label><span>Organization <span class="muted">(optional)</span></span>
+    <input type="text" name="org" maxlength="120" value="{{ org or '' }}">
+  </label>
+
+  {% include "_ground_rules.html" %}
+
+  <div>
+    <button type="submit">Create account</button>
+  </div>
+</form>
+
+<p class="muted" style="margin-top: 1.75rem; max-width: 420px; font-size: 0.88rem;">
+  This invite link expires {{ expires_at.strftime('%Y-%m-%d %H:%M UTC') }}{% if max_uses is none %}.{% elif max_uses == 1 %} and can only be used once.{% else %} and can be used up to {{ max_uses }} times.{% endif %}
+</p>
+{% endblock %}

@@ -1,0 +1,24 @@
+{# Shared model-picker option button (ACS-181). ONE source of truth for the
+   custom-listbox option markup so the single-pane composer and the compare
+   lanes render identically — including the ACS-80/ACS-98 keep-warm policy /
+   warmth chip ("Always on" / "Recently used" / "Needs startup (~Xmin)").
+
+   The `.wb-select-*` and `.wb-policy-*` CSS lives once in workbench.html; this
+   partial is used inside that page (single-pane menu) and cloned per lane by
+   workbench_compare.html, both of which inherit that cascade — so no CSS is
+   duplicated here.
+
+   Params (call with {% with %} or via a JS-cloned <template>):
+     m               — a model dict from available_models (id/label/startup_*)
+     selected_model_id — currently-selected model id (for aria-selected) #}
+<button type="button" class="wb-select-option"
+        role="option" data-value="{{ m.id }}" data-label="{{ m.label }}"
+        data-policy-always-on="{{ '1' if m.startup_always_on else '0' }}"
+        data-policy-label="{{ m.startup_label }}"
+        aria-selected="{{ 'true' if m.id == selected_model_id else 'false' }}">
+  <span class="wb-option-label">{{ m.label }}</span>
+  {% if m.startup_label %}
+  <span class="wb-policy {% if m.startup_always_on %}wb-policy-always-on{% elif m.startup_warm_hint %}wb-policy-warm{% else %}wb-policy-needs-startup{% endif %}"
+        title="{{ m.startup_tooltip }}">{{ m.startup_label }}</span>
+  {% endif %}
+</button>

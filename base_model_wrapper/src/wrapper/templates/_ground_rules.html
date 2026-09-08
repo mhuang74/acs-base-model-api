@@ -1,0 +1,39 @@
+{# Shared "ground rules + mandatory agreement" fieldset (ACS-170 / ACS-209).
+   Included by BOTH account-creation forms — public signup (signup.html) and
+   invite-accept (invite.html) — so the wording and the consent gate can't
+   drift between the two entry paths. The server side of each form validates
+   the `agree` field and stamps users.agreed_terms_at. Styles live here too:
+   one source of truth for markup + layout (the .agree-row override matters —
+   base.html styles all labels as column flex, which orphans the checkbox
+   above its own text). #}
+<style>
+  .ground-rules {
+    margin-top: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+  }
+  .ground-rules ul { margin: 0.25rem 0 0.9rem; padding-left: 1.2rem; }
+  .ground-rules li { margin-bottom: 0.4rem; }
+  .ground-rules .agree-row {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.55rem;
+    font-weight: normal;
+    color: var(--fg);
+  }
+  .ground-rules .agree-row input[type=checkbox] { margin-top: 0.2rem; }
+</style>
+<fieldset class="ground-rules">
+  <legend class="muted" style="padding: 0 0.4rem;">A few ground rules</legend>
+  <ul>
+    <li>This access is for you personally — please don't share your account or
+      API keys. Want to bring someone in? Share this signup form instead.</li>
+    <li>Don't use it for illegal, harmful, or clearly unethical purposes.</li>
+    <li>It's an early beta — expect rough edges, and tell us when something breaks.</li>
+  </ul>
+  <label class="agree-row">
+    <input type="checkbox" name="agree" value="yes" required>
+    <span>I've read and agree to the above.</span>
+  </label>
+</fieldset>

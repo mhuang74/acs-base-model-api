@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Email — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .back-link { display: inline-block; margin-bottom: 1rem; font-size: 0.85rem; }
+  dl.fields dt { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  dl.fields dd { margin: 0 0 0.7rem; color: var(--fg); word-break: break-word; }
+  .st-sent { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .st-skipped { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .st-failed { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+
+  .section-h { font-family: var(--font-serif); font-size: 1.15rem; margin: 2rem 0 0.75rem; }
+  .preview-frame {
+    width: 100%;
+    height: 480px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #fff;
+  }
+  pre.code-block {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.8rem 0.9rem;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--fg);
+  }
+  .err-block { background: var(--error-bg); border-color: var(--error-border); color: var(--error); }
+
+  .ev-item { margin-bottom: 0.6rem; }
+  .ev-item > summary { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .ev-item > summary::before { margin-right: 0.4rem; flex: 0 0 auto; }
+  .ev-time { color: var(--muted); font-size: 0.82rem; }
+  .ev-delivered { color: var(--success); }
+  .ev-bounced, .ev-complained { color: var(--error); }
+</style>
+{% endblock %}
+{% block content %}
+<a class="back-link" href="/admin/emails">&larr; All emails</a>
+<h1 style="word-break: break-word;">{{ row.subject }}</h1>
+
+<dl class="fields">
+  <dt>Status</dt>
+  <dd>
+    <span class="pill st-{{ row.send_status }}">{{ row.send_status }}</span>
+    {% if row.skip_reason %}<span class="muted">— {{ row.skip_reason }}</span>{% endif %}
+    {% if row.http_status %}<span class="muted">— HTTP {{ row.http_status }}</span>{% endif %}
+  </dd>
+  <dt>Kind</dt><dd>{{ row.kind }}</dd>
+  <dt>Sent at</dt><dd>{{ row.created_at.strftime('%Y-%m-%d %H:%M:%S %Z') }}</dd>
+  <dt>From</dt><dd>{{ row.from_email }}</dd>
+  <dt>To</dt>
+  <dd>{{ row.to_email }}{% if recipient_email and recipient_email != row.to_email %} <span class="muted">(account: {{ recipient_email }})</span>{% endif %}</dd>
+  <dt>Resend message id</dt>
+  <dd>{% if row.resend_message_id %}<code>{{ row.resend_message_id }}</code>{% else %}<span class="muted">—</span>{% endif %}</dd>
+  <dt>Latest delivery event</dt>
+  <dd>
+    {% if row.last_event %}{{ row.last_event }}{% if row.last_event_at %} <span class="muted">({{ row.last_event_at.strftime('%Y-%m-%d %H:%M') }})</span>{% endif %}
+    {% else %}<span class="muted">none yet</span>{% endif %}
+  </dd>
+</dl>
+
+{% if row.error %}
+  <div class="section-h">Send error</div>
+  <pre class="code-block err-block">{{ row.error }}</pre>
+{% endif %}
+
+<div class="section-h">HTML body</div>
+<!-- Rendered in a sandboxed iframe (no scripts/forms/navigation) so the email's
+     own markup + CSS can't affect or script the admin page. -->
+<iframe class="preview-frame" sandbox srcdoc="{{ row.body_html }}" title="Email HTML preview"></iframe>
+<details style="margin-top:0.75rem;">
+  <summary>View HTML source</summary>
+  <pre class="code-block">{{ row.body_html }}</pre>
+</details>
+
+<div class="section-h">Text body</div>
+<pre class="code-block">{{ row.body_text }}</pre>
+
+<div class="section-h">Delivery events ({{ events|length }})</div>
+{% if events %}
+  {% for item in events %}
+  {% set e = item.ev %}
+  <details class="ev-item">
+    <summary>
+      <span class="ev-{{ e.event_type.split('.')[-1] }}"><strong>{{ e.event_type }}</strong></span>
+      <span class="ev-time">{{ (e.occurred_at or e.received_at).strftime('%Y-%m-%d %H:%M:%S') }}</span>
+    </summary>
+    <pre class="code-block">{{ item.pretty }}</pre>
+  </details>
+  {% endfor %}
+{% else %}
+  <p class="muted">No delivery events received yet. (Configure the Resend webhook to point at <code>/webhooks/resend</code>.)</p>
+{% endif %}
+{% endblock %}

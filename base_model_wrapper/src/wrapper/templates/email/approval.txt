@@ -1,0 +1,35 @@
+Hi {{ user_name }},
+
+Your application for ACS Infra has been approved.
+{% if set_password_url %}
+First, set your password (single-use link{% if set_password_expiry %}, valid for {{ set_password_expiry }}{% endif %}):
+{{ set_password_url }}
+
+After that, sign in at {{ dashboard_url }}.
+{%- else %}
+Sign in at {{ dashboard_url }}.
+{%- endif %} Your initial API key will be shown ONCE on
+your dashboard when you first log in — save it immediately; we don't store
+the plaintext after that, and we never send API keys by email.
+
+Start here:
+- Dashboard / key reveal: {{ dashboard_url }}
+- Tutorial: {{ tutorial_url }}
+{% if discord_connect_url %}- Discord (updates, model requests, feedback): connect from your
+  dashboard and we'll add you to the server: {{ discord_connect_url }}
+{% elif discord_url %}- Discord (updates, model requests, feedback): {{ discord_url }}
+{% endif -%}
+
+Available models:
+{% for model in available_models -%}
+- {{ model.id }} ({{ model.served_model_name }}, {{ model.gpu_shape }}, max context {{ model.max_model_len or "unknown" }} tokens)
+{% else -%}
+- Check /v1/models after you copy your key.
+{% endfor %}
+
+If you need a new key later, the dashboard's "Create key" form will mint one.
+If you forget the initial key before saving it, ask
+infra@acsresearch.org to revoke + reissue.
+
+— ACS Research
+infra@acsresearch.org

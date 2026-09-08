@@ -1,0 +1,2912 @@
+{% extends "base.html" %}
+{% block title %}Workbench — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  /* The workbench wants more horizontal room than the default 820px main. */
+  main { max-width: 1120px; }
+
+  /* Opt the workbench forms out of the global form max-width:420px cap. */
+  .wb-form { max-width: none; }
+
+  .wb-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 1.75rem;
+    /* Default `stretch` so the sidebar's right-border runs the full height
+       of the section, instead of ending at the sidebar's content. */
+  }
+  @media (max-width: 760px) { .wb-layout { grid-template-columns: 1fr; } }
+
+  .wb-sidebar {
+    border-right: 1px solid var(--border);
+    padding-right: 1.25rem;
+    /* No min-height — the grid stretch handles it. */
+  }
+  @media (max-width: 760px) {
+    .wb-sidebar { border-right: 0; border-bottom: 1px solid var(--border); padding-right: 0; padding-bottom: 1rem; }
+  }
+  .wb-sidebar-heading {
+    font-family: var(--font-sans);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0.25rem 0 0.5rem;
+  }
+  .wb-sidebar ul { list-style: none; padding: 0; margin: 0 0 1rem; }
+  /* Chat rows (ACS-257): the link fills the row; a kebab (⋮) fades in on
+     hover/focus for the pin/rename/delete menu; pinned rows carry a small
+     always-visible pin glyph. */
+  .wb-sidebar li {
+    position: relative;
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius);
+  }
+  .wb-sidebar li a {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.55rem;
+    border-radius: var(--radius);
+    color: var(--fg-soft);
+    text-decoration: none;
+    font-size: 0.88rem;
+    line-height: 1.3;
+  }
+  .wb-sidebar li a .wb-chat-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Pin glyph: shown via the li.pinned class, NOT the hidden attribute —
+     `hidden` is HTML-only and has no effect on inline <svg>. */
+  .wb-sidebar li a .wb-chat-pin {
+    display: none;
+    width: 0.8rem; height: 0.8rem; flex-shrink: 0; color: var(--muted);
+  }
+  .wb-sidebar li.pinned a .wb-chat-pin { display: inline-block; }
+  .wb-sidebar li.active a .wb-chat-pin { color: var(--accent); }
+  .wb-sidebar li a:hover { background: var(--surface-alt); color: var(--fg); text-decoration: none; }
+  .wb-sidebar li.active a {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .wb-chat-kebab {
+    position: absolute;
+    right: 0.2rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.5rem; height: 1.5rem;
+    display: flex; align-items: center; justify-content: center;
+    border: 0; border-radius: var(--radius);
+    background: transparent; color: var(--muted);
+    cursor: pointer; padding: 0;
+    opacity: 0;
+    transition: opacity 100ms, background 100ms, color 100ms;
+  }
+  .wb-chat-kebab:hover { background: var(--surface); color: var(--fg); }
+  .wb-sidebar li:hover .wb-chat-kebab,
+  .wb-sidebar li:focus-within .wb-chat-kebab,
+  .wb-chat-kebab[aria-expanded="true"] { opacity: 1; }
+  /* Touch has no hover: keep the kebab visible so pin/rename/delete stay
+     discoverable (tooltips remain a desktop affordance). */
+  @media (pointer: coarse) {
+    .wb-chat-kebab { opacity: 1; }
+    .wb-sidebar li a { padding-right: 1.8rem; }
+  }
+  .wb-chat-kebab svg { width: 14px; height: 14px; }
+  /* Row with the kebab visible needs breathing room so the ⋮ doesn't overlap
+     the ellipsized title. */
+  .wb-sidebar li:hover a, .wb-sidebar li:focus-within a { padding-right: 1.8rem; }
+  .wb-chat-menu {
+    position: absolute;
+    right: 0.2rem;
+    top: calc(100% - 0.1rem);
+    z-index: 35;
+    min-width: 9rem;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    padding: 0.25rem;
+  }
+  .wb-chat-menu button {
+    display: flex; align-items: center; gap: 0.5rem;
+    width: 100%;
+    border: 0; background: transparent; color: var(--fg);
+    font-size: 0.85rem; text-align: left;
+    padding: 0.4rem 0.55rem; border-radius: var(--radius);
+    cursor: pointer;
+  }
+  .wb-chat-menu button:hover { background: var(--surface-alt); color: var(--fg); }
+  .wb-chat-menu button.danger { color: var(--danger, #c0392b); }
+  .wb-chat-menu button.danger:hover { background: var(--surface-alt); color: var(--danger, #c0392b); }
+  .wb-chat-menu button svg { width: 13px; height: 13px; flex-shrink: 0; }
+  /* Inline sidebar rename: the row's link hides and this input takes its place. */
+  .wb-chat-rename-input {
+    flex: 1; min-width: 0;
+    font-size: 0.88rem; line-height: 1.3;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--accent); border-radius: var(--radius);
+    background: var(--surface); color: var(--fg);
+  }
+  .wb-sidebar .new-btn { width: 100%; margin-bottom: 1rem; }
+  .wb-sidebar .export-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin-top: 0.5rem;
+  }
+  .wb-sidebar .export-all:hover { color: var(--accent); text-decoration: none; }
+
+  /* Title sits on its own line so long titles can wrap naturally. */
+  .wb-section-head h1 {
+    margin: 0 0 0.6rem;
+    overflow-wrap: anywhere;
+  }
+  /* Action row below the title — left-aligned, separated by ~0.5rem. */
+  .wb-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    margin: 0 0 1.25rem;
+  }
+  .wb-actions form { margin: 0; max-width: none; }
+
+  /* Single / Compare mode toggle — a segmented control that switches the
+     composer within this same surface (no page navigation). Sits first in the
+     action row; the session chrome (rename / export / delete) stays put in
+     both modes. */
+  .wb-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    gap: 2px;
+  }
+  .wb-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    height: 1.7rem;
+    padding: 0 0.65rem;
+    font-family: var(--font-sans);
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius) - 2px);
+    cursor: pointer;
+    min-height: 0;
+    transition: background 120ms, color 120ms;
+  }
+  .wb-mode-btn:hover { color: var(--fg); background: var(--surface); }
+  .wb-mode-btn[aria-selected="true"] {
+    color: var(--accent);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .wb-mode-btn svg { width: 0.95rem; height: 0.95rem; }
+
+  /* Compare mode wants more horizontal room for side-by-side lanes than the
+     single-pane composer. Widen the shell only while compare is active — the
+     `main` cap set above would otherwise clamp the wider lane grid. */
+  main:has(.wb-layout.is-compare-mode) { max-width: 1400px; }
+
+  /* Icon button. Square, neutral until hover; uses --accent / --error
+     for hover states from the design tokens. */
+  .wb-icon-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: var(--surface);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    line-height: 1;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .wb-icon-btn:hover { background: var(--surface-alt); color: var(--accent); border-color: var(--border-strong); text-decoration: none; }
+  .wb-icon-btn.danger:hover { color: var(--error); border-color: var(--error-border); background: var(--error-bg); }
+  .wb-icon-btn svg { width: 1rem; height: 1rem; }
+
+  /* CSS tooltips: triggered by hover/focus on any element with data-tooltip.
+     The native `title=` attribute is slow (700ms) and unstyled; this is
+     fast (no delay) and theme-aware. Pointer-events: none keeps the tip
+     from intercepting clicks. */
+  [data-tooltip] { position: relative; }
+  [data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-3px);
+    background: var(--fg);
+    color: var(--bg);
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.3;
+    padding: 0.35rem 0.55rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 90ms ease 0ms, transform 90ms ease 0ms;
+    z-index: 10;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  }
+  [data-tooltip]:hover::after, [data-tooltip]:focus-visible::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    /* small delay so quick mouse-overs don't flash a tooltip */
+    transition-delay: 180ms;
+  }
+  /* Suppress the tooltip when a dropdown attached to this button is open;
+     the menu would otherwise sit on top of the tooltip. */
+  [data-tooltip][aria-expanded="true"]::after { opacity: 0; transition-delay: 0ms; }
+
+  /* Export dropdown — single download button, two format choices.
+     <button> + <div role="menu"> driven by JS (no library). */
+  .wb-dropdown { position: relative; display: inline-block; }
+  .wb-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    min-width: 18rem;
+    padding: 0.3rem 0;
+    z-index: 20;
+  }
+  .wb-dropdown-menu[hidden] { display: none; }
+  .wb-dropdown-menu a {
+    display: block;
+    padding: 0.55rem 0.9rem;
+    color: var(--fg);
+    text-decoration: none;
+    border-radius: 0;
+  }
+  .wb-dropdown-menu a:hover { background: var(--surface-alt); text-decoration: none; }
+  .wb-dropdown-menu a .label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .wb-dropdown-menu a .label code {
+    background: transparent;
+    padding: 0;
+    color: var(--accent);
+    font-size: 0.85em;
+  }
+  .wb-dropdown-menu a .hint {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 0.1rem;
+  }
+
+  /* Transient "using key …" note beside the API-key picker. Sits below the
+     <select> in its label column; fades in on change, fades out after a beat. */
+  .wb-key-confirm {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--success, #2da44e);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    min-height: 1em;
+  }
+  .wb-key-confirm.show { opacity: 1; }
+  .wb-key-confirm code { font-size: 0.95em; }
+
+  .wb-key-line { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
+  .wb-key-line code { font-size: 0.85em; }
+  .wb-key-line strong { color: var(--fg); font-weight: 600; }
+
+  /* Starter-prompt chips: clicking one populates the prompt textarea with a
+     continuation-style example. Only rendered when chat.prompt_text is
+     empty (see the Jinja guard below) so a returning user with work in
+     progress can't accidentally wipe it. */
+  .wb-starters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0 0 0.6rem;
+  }
+  .wb-starters-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .wb-starter {
+    appearance: none;
+    background: var(--surface);
+    color: var(--fg-soft);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.25rem 0.7rem;
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .wb-starter:hover {
+    background: var(--surface-alt);
+    color: var(--accent);
+    border-color: var(--border-strong);
+  }
+  .wb-starter:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  /* Inline title rename (ACS-257): the h1's text is swapped for this input in
+     place — no separate form row. font: inherit picks up the h1 styling since
+     the input lives inside the h1. */
+  .wb-title-input {
+    font: inherit;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 0 0.35rem;
+    margin: 0;
+    width: 100%;
+    max-width: 26rem;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .wb-title-input:focus { outline: none; }
+  .wb-title-error { color: var(--danger, #c0392b); font-size: 0.8rem; font-weight: 400; margin-left: 0.5rem; }
+
+  .wb-textarea {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    min-height: 22rem;
+    padding: 0.9rem 1rem;
+  }
+
+  /* Modernized controls row: label above, control below, soft border that
+     darkens on hover/focus, consistent height across the three controls. */
+  /* Tidy 2-col grid (ACS-190): Model + API key on the top row (both "pick a
+     thing"), Max tokens + Temperature on the next (both "tune the run"). A grid
+     — not flex-wrap — so columns line up instead of each field claiming the
+     width of its widest child (which used to blow the Temperature column out on
+     its hint and orphan the API-key field onto its own row). */
+  .wb-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.85rem 1rem;
+    /* start, not end: the Temperature cell is taller (slider + hint), so
+       bottom-aligning would shove Max tokens down and stagger the labels.
+       Top-align keeps every field label on a shared baseline. */
+    align-items: start;
+    padding-top: 0.5rem;
+  }
+  .wb-controls > label { min-width: 0; }
+  /* The model picker's desktop 28rem min-width (see .wb-select below) would
+     overflow its half-width grid cell; inside the controls grid let it fill the
+     cell instead. The cell is ~half the composer, still wide enough for the
+     model name + policy chip. */
+  .wb-controls .wb-select { min-width: 0; width: 100%; }
+  .wb-controls .wb-keyselect { width: 100%; }
+  /* Below 1000px the 240px sidebar is still docked, so a 2-col controls grid
+     would squeeze each cell to ~14rem and cramp the model picker + its dropdown
+     (ACS-190 review). Go single-column until the composer has room for two. */
+  @media (max-width: 1000px) {
+    .wb-controls { grid-template-columns: 1fr; }
+  }
+  .wb-controls label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .wb-num {
+    appearance: none;
+    -moz-appearance: textfield;
+    width: 6.5rem;
+    height: 2.25rem;
+    padding: 0 0.7rem;
+    font-family: var(--font-mono);
+    font-size: 0.92rem;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: border-color 120ms, box-shadow 120ms, background 120ms;
+  }
+  /* Temperature: slider linked to the number input (ACS-145). */
+  .wb-temp-control { display: flex; align-items: center; gap: 0.6rem; }
+  .wb-temp-control .wb-range {
+    flex: 1 1 auto;
+    min-width: 5rem;
+    height: 2.25rem;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .wb-num-temp { width: 4.25rem; flex: 0 0 auto; }
+  /* Reset the uppercase/tracking inherited from .wb-controls label (ACS-190) —
+     a full sentence shouldn't shout in caps — and cap its width so the hint
+     can't stretch the Temperature grid cell. */
+  .wb-temp-hint, .wb-cap-hint {
+    display: block; margin-top: 0.3rem; max-width: 16rem;
+    font-size: 0.7rem; color: var(--muted); line-height: 1.35;
+    text-transform: none; letter-spacing: 0; font-weight: 400;
+  }
+  .wb-num::-webkit-outer-spin-button,
+  .wb-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .wb-num:hover { border-color: var(--border-strong); background: var(--surface-alt); }
+  .wb-num:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  /* Sampling-params panel (ACS-165, placement fixed ACS-188). Grouped with the
+     MODEL / MAX TOKENS / TEMPERATURE controls as an IN-FLOW disclosure: it sits
+     directly under the controls row, and expanding it pushes page content down
+     (normal flow) instead of floating a popover over the footer. Mirrors the
+     compare lanes' in-flow "Sampling parameters" disclosure so the two surfaces
+     behave and expose the same knobs (top_p / top_k / min_p / penalties / seed /
+     stop). */
+  .wb-sampling { font-size: 0.82rem; margin-top: 0.85rem; border-bottom: 1px solid var(--border); }
+  .wb-sampling-summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 0.15rem; color: var(--fg);
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    transition: color 120ms;
+  }
+  .wb-sampling-summary::-webkit-details-marker { display: none; }
+  /* Disclosure chevron sized/styled to match the Model picker's caret
+     (.wb-select-caret, 1.25rem) — the old 0.75rem "▸" text glyph was easy to
+     miss (user feedback, ACS-254). Masked so it takes currentColor and follows the
+     summary's hover accent. */
+  .wb-sampling-summary::before {
+    content: "";
+    width: 1.25rem; height: 1.25rem; flex-shrink: 0;
+    background-color: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 6 15 12 9 18'/%3E%3C/svg%3E") no-repeat center / contain;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 6 15 12 9 18'/%3E%3C/svg%3E") no-repeat center / contain;
+    transition: transform 0.1s ease;
+  }
+  .wb-sampling[open] > .wb-sampling-summary::before { transform: rotate(90deg); }
+  .wb-sampling-summary:hover { color: var(--accent); }
+  .wb-sampling-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wb-sampling-grid {
+    display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem;
+    padding: 0.3rem 0.15rem 0.85rem;
+  }
+  .wb-sampling-grid label {
+    display: inline-flex; flex-direction: column; gap: 0.2rem;
+    font-size: 0.78rem; color: var(--muted);
+  }
+  .wb-sampling-grid .wb-num { width: 5rem; }
+  /* Composer-level logprobs / heatmap toggle (ACS-188): surfaced on its own
+     always-visible row between the sampling disclosure and the Continue action,
+     so this headline feature isn't buried inside a collapsed panel. */
+  .wb-logprobs-toggle {
+    /* flex-direction:row + align-items:center are set !important because a
+       more-specific global form-label rule forces column/center otherwise
+       (same guard the original in-grid toggle used). */
+    display: flex; flex-direction: row !important; align-items: center !important;
+    gap: 0.5rem; flex-wrap: wrap;
+    /* Match the Sampling-parameters summary's padding + divider (ACS-190) so the
+       two optional-settings rows read as a consistent stack, not a heavy bar
+       followed by a stray checkbox. */
+    margin: 0; padding: 0.5rem 0.15rem; border-bottom: 1px solid var(--border);
+    font-size: 0.72rem; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg);
+  }
+  .wb-logprobs-toggle input[type="checkbox"] { width: auto; margin: 0; }
+  .wb-logprobs-toggle .wb-num { width: 4.5rem; }
+  .wb-logprobs-toggle .wb-logprobs-hint {
+    font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted);
+  }
+  /* Continue / Stop stand on their own action row (ACS-188) — no longer sharing
+     a row with a settings toggle. */
+  .wb-composer-actions {
+    display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    margin-top: 0.35rem;
+  }
+  .wb-composer-actions .spacer { flex: 1; min-width: 0; }
+  /* Read-only logprobs heatmap companion panel, directly under the output box. */
+  .wb-heatmap-wrap { margin-top: 0.5rem; }
+  .wb-heatmap-head { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.3rem; }
+  .wb-legend {
+    font-size: 0.74rem; color: var(--muted);
+    display: flex; align-items: center; gap: 0.4rem;
+    margin: 0.3rem 0 0;
+  }
+  .wb-legend[hidden] { display: none; }
+  .wb-legend .swatch {
+    display: inline-block; width: 46px; height: 10px; border-radius: 2px;
+    background: linear-gradient(90deg, #c0392b, #e6b800, #2e9e5b);
+  }
+  .wb-legend .wb-legend-hint { margin-left: auto; }
+  .wb-heatmap {
+    font-family: var(--font-mono); font-size: 0.86rem; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-word;
+    /* Fixed height, not max-height: the panel now sits ABOVE the controls
+       row inside the form, so growing with the stream would push the
+       Continue/Stop buttons down chunk by chunk (ACS-254 review). */
+    height: 14rem; overflow-y: auto;
+    padding: 0.6rem 0.7rem; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--surface);
+  }
+
+  /* Per-chat API key picker. A plain native <select> (unlike the model picker
+     it carries no icons/tooltips), styled to match .wb-num. FormData submits
+     its value with the generation form automatically. */
+  .wb-keyselect {
+    appearance: none;
+    -webkit-appearance: none;
+    height: 2.25rem;
+    max-width: 18rem;
+    padding: 0 1.9rem 0 0.7rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--fg);
+    background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 0.5rem center;
+    background-size: 1.2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-overflow: ellipsis;
+    transition: border-color 120ms, box-shadow 120ms, background-color 120ms;
+  }
+  .wb-keyselect:hover { border-color: var(--border-strong); background-color: var(--surface-alt); }
+  .wb-keyselect:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .wb-keyselect:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  /* Custom model picker. Native <select> can't host icons or hover-targeted
+     info tooltips inside <option>; we render our own listbox and submit the
+     value via a hidden input. */
+  .wb-select { position: relative; min-width: 28rem; max-width: 100%; }
+  .wb-select-trigger {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    width: 100%;
+    height: 2.25rem;
+    padding: 0 0.6rem 0 0.85rem;
+    background: var(--surface);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-sans);
+    font-size: 0.92rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 120ms, box-shadow 120ms, background 120ms;
+    text-align: left;
+  }
+  /* Override default `button:hover { color: #fff }` from base.css that would
+     otherwise paint the trigger text white-on-grey when hovered. */
+  .wb-select-trigger,
+  .wb-select-trigger:hover,
+  .wb-select-trigger:active { color: var(--fg); }
+  .wb-select-trigger:hover { border-color: var(--border-strong); background: var(--surface-alt); }
+  .wb-select-trigger:focus-visible,
+  .wb-select-trigger[aria-expanded="true"] {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .wb-select-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* User feedback (ACS-254): the 16px muted caret read as decoration, not
+     "this opens a menu" — bigger and full-contrast so the dropdown is obvious. */
+  .wb-select-caret { width: 1.25rem; height: 1.25rem; color: var(--fg); flex-shrink: 0; }
+  .wb-select-trigger[aria-expanded="true"] .wb-select-caret { transform: rotate(180deg); }
+
+  .wb-select-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    padding: 0.3rem;
+    z-index: 30;
+    max-height: 22rem;
+    overflow-y: auto;
+  }
+  .wb-select-menu[hidden] { display: none; }
+  .wb-select-option {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius) - 1px);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 0.92rem;
+    cursor: pointer;
+    text-align: left;
+  }
+  /* Same override as the trigger — base.css `button:hover` would otherwise
+     flip option text to white on the grey hover background. */
+  .wb-select-option,
+  .wb-select-option:hover,
+  .wb-select-option:active { color: var(--fg); }
+  .wb-select-option:hover,
+  .wb-select-option[aria-selected="true"] { background: var(--surface-alt); border-color: transparent; }
+  .wb-select-option[aria-selected="true"] { font-weight: 600; }
+  /* Keyboard-navigation highlight (ACS-183). Distinct from aria-selected (the
+     committed choice) — this is the transient "active" option the arrow keys
+     move over. DOM focus stays on the listbox (aria-activedescendant pattern),
+     so we can't rely on :focus; this class + a focus-ring outline shows where
+     the keyboard cursor is. */
+  .wb-select-option.is-active {
+    background: var(--surface-alt);
+    border-color: transparent;
+    outline: 2px solid var(--accent, #4f46e5);
+    outline-offset: -2px;
+  }
+  .wb-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Static keep-warm policy chip (ACS-80). Distinct from the dormant
+     .wb-status-warm / .wb-status-cold classes below, which are reserved for
+     the live warm/cold indicator that ACS-62 will revive. */
+  .wb-policy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    line-height: 1.2;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .wb-policy-always-on {
+    background: rgba(46, 160, 67, 0.12);
+    color: #2da44e;
+  }
+  .wb-policy-needs-startup {
+    background: rgba(204, 102, 32, 0.10);
+    color: var(--accent-2);
+    border: 1px solid rgba(204, 102, 32, 0.30);
+  }
+  [data-theme="dark"] .wb-policy-needs-startup {
+    background: rgba(232, 127, 44, 0.16);
+    color: var(--accent-2);
+    border-color: rgba(232, 127, 44, 0.36);
+  }
+  /* ACS-98: soft "recently used - usually warm" hint. Green like always-on
+     (likely fast) but a dashed border signals it's a heuristic, not a
+     guarantee. */
+  .wb-policy-warm {
+    background: rgba(46, 160, 67, 0.10);
+    color: #2da44e;
+    border: 1px dashed rgba(46, 160, 67, 0.45);
+  }
+  [data-theme="dark"] .wb-policy-warm {
+    background: rgba(46, 160, 67, 0.16);
+    border-color: rgba(46, 160, 67, 0.50);
+  }
+  /* Trigger-side variant: slightly muted so the picked model name reads first. */
+  .wb-trigger-policy { font-size: 0.7rem; opacity: 0.95; }
+
+  /* Status pill — green dot for "ready", warning chevron for "needs booting". */
+  .wb-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .wb-status-warm {
+    background: rgba(46, 160, 67, 0.12);
+    color: #2da44e;
+  }
+  /* Orange palette pulled from the design tokens (--accent-2). Slightly
+     translucent fill + matching border so it reads as a real "needs
+     attention" pill in both themes. */
+  .wb-status-cold {
+    background: rgba(204, 102, 32, 0.12);
+    color: var(--accent-2);
+    border: 1px solid rgba(204, 102, 32, 0.35);
+  }
+  [data-theme="dark"] .wb-status-cold {
+    background: rgba(232, 127, 44, 0.18);
+    color: var(--accent-2);
+    border-color: rgba(232, 127, 44, 0.40);
+  }
+  .wb-status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #2da44e;
+    box-shadow: 0 0 0 3px rgba(46, 160, 67, 0.18);
+    flex-shrink: 0;
+  }
+  .wb-status-icon { width: 14px; height: 14px; flex-shrink: 0; }
+  /* Info ⓘ that opens a multi-line tooltip on hover. The standard
+     [data-tooltip] CSS uses white-space:nowrap; we override here for the
+     info badge so the explanation can wrap onto two lines. */
+  .wb-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px; height: 16px;
+    margin-left: 0.15rem;
+    color: currentColor;
+    opacity: 0.75;
+    cursor: help;
+    flex-shrink: 0;
+  }
+  .wb-info svg { width: 14px; height: 14px; }
+  .wb-info:hover { opacity: 1; }
+  .wb-info[data-tooltip]::after {
+    white-space: normal;
+    width: max-content;
+    max-width: 18rem;
+    text-align: left;
+    line-height: 1.4;
+    transform: translateX(-90%) translateY(-3px);
+    left: 50%;
+  }
+  .wb-info[data-tooltip]:hover::after,
+  .wb-info[data-tooltip]:focus-visible::after {
+    transform: translateX(-90%) translateY(0);
+  }
+  .wb-streaming-indicator {
+    display: none;
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    align-self: center;
+  }
+  .wb-meta {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-top: 1rem;
+    font-family: var(--font-mono);
+    display: none;
+  }
+
+  /* Cold-boot progress banner: sits above the form, stays up for the
+     entire allocation wait (retries indefinitely on the wrapper side).
+     Visual style mirrors the existing `.notice` block (same --warn-bg /
+     --warn-border tokens). Indeterminate progress bar on top, bold phase
+     label + elapsed timer underneath. Purely informational — no buttons. */
+  .wb-coldboot {
+    display: none;
+    flex-direction: column;
+    gap: 0.55rem;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    color: var(--fg-soft);
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius);
+    font-size: 0.92rem;
+    margin: 0 0 0.9rem;
+  }
+  .wb-coldboot.is-active { display: flex; }
+  /* Indeterminate progress bar. A 35%-wide sliver sweeps left-to-right
+     across the track; the keyframes overshoot on both sides so the bar
+     fully enters and fully exits the track each cycle. */
+  .wb-coldboot-progress {
+    position: relative;
+    width: 100%;
+    height: 4px;
+    background: var(--warn-border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .wb-coldboot-progress::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 35%;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: wb-coldboot-sweep 1.8s infinite cubic-bezier(0.4, 0.0, 0.2, 1);
+  }
+  @keyframes wb-coldboot-sweep {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(285%); }
+  }
+  .wb-coldboot-body {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .wb-coldboot-text {
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .wb-coldboot-timer {
+    font-family: var(--font-mono);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .wb-snapshots { margin-top: 2rem; font-size: 0.88rem; }
+  .wb-snapshots > summary { cursor: pointer; padding: 0.5rem 0.85rem; color: var(--muted); }
+  .wb-snapshots > summary:hover { color: var(--fg); }
+  .wb-snapshots .snapshots-body { padding: 0.25rem 0.85rem 0.5rem; }
+  .wb-snapshots ul { list-style: none; padding: 0; margin: 0; }
+  .wb-snapshots li {
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .wb-snapshots li:last-child { border-bottom: 0; }
+  .wb-snap-item > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.5rem 0;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+  .wb-snap-item > summary::-webkit-details-marker { display: none; }
+  .wb-snap-item > summary::before {
+    content: "▸";
+    color: var(--muted);
+    font-size: 0.75rem;
+    width: 0.9rem;
+    display: inline-block;
+    transition: transform 0.1s ease;
+  }
+  .wb-snap-item[open] > summary::before { transform: rotate(90deg); }
+  .wb-snap-item .ts { color: var(--muted); font-family: var(--font-mono); font-size: 0.82rem; min-width: 11ch; }
+  .wb-snap-item .meta { color: var(--fg-soft); }
+  .wb-snap-item .model { color: var(--muted); font-family: var(--font-mono); font-size: 0.82rem; }
+  .wb-snap-item .summary-spacer { flex: 1; }
+  .wb-snap-item form { margin: 0; }
+  .wb-snap-body {
+    padding: 0.25rem 0 0.75rem 1.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .wb-snap-text {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 18rem;
+    overflow: auto;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-soft, rgba(127, 127, 127, 0.05));
+    margin: 0;
+  }
+  .wb-snap-prefix { color: var(--fg-soft); }
+  .wb-snap-completion { color: #1f7a4d; }
+  @media (prefers-color-scheme: dark) {
+    .wb-snap-completion { color: #6ee7a8; }
+  }
+  .wb-snap-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .wb-snap-buttons .copied {
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-left: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .wb-snap-buttons .copied.show { opacity: 1; }
+
+  /* Mobile (<=760px): the sidebar already stacks above the section via the
+     earlier media query. Here we make the controls row, model picker, and
+     export dropdown fit a narrow viewport so nothing overflows. */
+  @media (max-width: 760px) {
+    /* The picker's desktop 28rem min-width was forcing horizontal scroll
+       on phones; let it shrink to fill its label column instead. */
+    .wb-select { min-width: 0; width: 100%; }
+    /* One column on narrow viewports (ACS-190): the desktop 2-col grid would
+       squeeze each field to ~half a phone width. */
+    .wb-controls { gap: 0.65rem; grid-template-columns: 1fr; }
+    .wb-controls .wb-num { width: 100%; }
+    /* Action buttons (Stop, Continue) live on their own row (ACS-188); fill it
+       on narrow viewports. The spacer collapses away. */
+    .wb-composer-actions .spacer { display: none; }
+    .wb-composer-actions #wb-stop,
+    .wb-composer-actions #wb-continue { flex: 1 1 auto; justify-content: center; }
+    /* Export dropdown menu can't be 18rem wide if the viewport is narrower
+       than that — clamp to the visible area and align right-edge so it
+       doesn't run off the right side of the screen. */
+    .wb-dropdown-menu {
+      min-width: 0;
+      width: max-content;
+      max-width: calc(100vw - 2rem);
+      left: auto;
+      right: 0;
+    }
+    /* Snapshot summary row: timestamp + meta + model can't all fit on
+       one line at 375px. Let them wrap and shrink the ts column. */
+    .wb-snap-item > summary { flex-wrap: wrap; gap: 0.4rem 0.6rem; }
+    .wb-snap-item .ts { min-width: 0; }
+    .wb-snap-item .summary-spacer { display: none; }
+    .wb-snap-body { padding-left: 0; }
+    .wb-snap-text { font-size: 0.78rem; padding: 0.5rem 0.6rem; }
+    /* Snapshots <details> summary text was overflowing — let it wrap. */
+    .wb-snapshots > summary { white-space: normal; line-height: 1.4; }
+  }
+
+  @media (max-width: 480px) {
+    .wb-textarea {
+      font-size: 0.85rem;
+      padding: 0.7rem 0.75rem;
+      min-height: 18rem;
+    }
+    /* Narrower icon buttons / actions row stays one line. */
+    .wb-actions { gap: 0.3rem; }
+    .wb-key-line { font-size: 0.82rem; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+{% set active_mode = "compare" if mode == "compare" else "single" %}
+{# Shared per-token logprobs heatmap primitive (window.acsAppendHeatmap /
+   acsNormalizeLogprobs) — the same partial the loom + compare use; drives the
+   single-pane toggle-able heatmap companion below. Include-once guarded, so the
+   compare pane re-including it is a no-op. #}
+{% include "_logprobs_heatmap.html" %}
+<div class="wb-layout{% if active_mode == 'compare' %} is-compare-mode{% endif %}" id="wb-layout" data-mode="{{ active_mode }}">
+  <aside class="wb-sidebar">
+    <form action="/workbench/new" method="post" class="wb-form" style="margin: 0;">
+      <button class="new-btn" type="submit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New session
+      </button>
+    </form>
+
+    <p class="wb-sidebar-heading">Recent</p>
+    {% if sidebar %}
+    {# Chat rows (ACS-257). data-pinned-at / data-updated feed the client-side
+       re-sort after a pin toggle, mirroring the server ORDER BY (pinned_at
+       DESC NULLS LAST, updated_at DESC) without a page reload. #}
+    <ul id="wb-chat-list">
+      {% for s in sidebar %}
+      <li class="{% if chat and s.id == chat.id %}active{% endif %}{% if s.pinned_at %} pinned{% endif %}"
+          data-chat-id="{{ s.id }}"
+          data-pinned-at="{{ s.pinned_at.isoformat() if s.pinned_at else '' }}"
+          data-updated="{{ s.updated_at.isoformat() }}">
+        <a href="/workbench/{{ s.id }}" title="{{ s.title }}">
+          <svg class="wb-chat-pin" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-label="Pinned"><path d="M16 3a1 1 0 0 1 .97 1.24l-.9 3.62 3.29 3.29a1 1 0 0 1-.21 1.58l-4.68 2.6-3.02 5.43a1 1 0 0 1-1.58.21l-2.83-2.83-4.24 4.24a1 1 0 0 1-1.41-1.41l4.24-4.24-2.83-2.83a1 1 0 0 1 .21-1.58l5.43-3.02 2.6-4.68A1 1 0 0 1 12.62 4z" transform="scale(0.85) translate(2 2)"/></svg>
+          <span class="wb-chat-title">{{ s.title or "Untitled" }}</span>
+        </a>
+        <button type="button" class="wb-chat-kebab" aria-label="Chat actions for {{ s.title or 'Untitled' }}" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+        </button>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted" style="font-size: 0.85rem;">No saved sessions yet.</p>
+    {% endif %}
+
+    <a href="/workbench/export-all.jsonl" class="export-all" title="Download all sessions as JSONL">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export all (.jsonl)
+    </a>
+
+    <p class="muted wb-storage-note" style="font-size: 0.78rem; line-height: 1.4; margin-top: 0.9rem;">
+      Sessions you save here — your prompts and completions — are stored on our
+      server so you can revisit and export them. The <code>/v1</code> API itself
+      stores no request or response bodies; see
+      <a href="/tutorial/account">Account &amp; privacy</a>.
+    </p>
+  </aside>
+
+  <section>
+    {% if chat %}
+    <div class="wb-section-head">
+      <h1 id="wb-title" data-chat-id="{{ chat.id }}">{{ chat.title }}</h1>
+      <div class="wb-actions">
+        {# Single / Compare mode toggle. Switches the composer within THIS
+           surface (no navigation), so the session chrome below stays visible
+           in both modes. Server sets the initial pressed state from ?mode=;
+           the JS flips panes + syncs the URL without a reload. #}
+        <div class="wb-mode-toggle" role="tablist" aria-label="Workbench mode">
+          <button type="button" class="wb-mode-btn" id="wb-mode-single" role="tab"
+                  data-mode="single" aria-selected="{{ 'true' if active_mode == 'single' else 'false' }}"
+                  data-tooltip="Single-pane composer — continue one prompt">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
+            Single
+          </button>
+          <button type="button" class="wb-mode-btn" id="wb-mode-compare" role="tab"
+                  data-mode="compare" aria-selected="{{ 'true' if active_mode == 'compare' else 'false' }}"
+                  data-tooltip="Compare this prompt across several models / params side by side">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg>
+            Compare
+          </button>
+        </div>
+        <button type="button" class="wb-icon-btn" id="wb-rename-toggle" data-tooltip="Rename session" aria-label="Rename session">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </button>
+        <div class="wb-dropdown" id="wb-export-dropdown">
+          <button type="button" class="wb-icon-btn" id="wb-export-toggle"
+                  data-tooltip="Export session" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+          <div class="wb-dropdown-menu" id="wb-export-menu" role="menu" hidden>
+            <a role="menuitem" href="/workbench/{{ chat.id }}/export.txt">
+              <span class="label">Plain text <code>.txt</code></span>
+              <span class="hint">Just the rolling prompt as text.</span>
+            </a>
+            <a role="menuitem" href="/workbench/{{ chat.id }}/export.jsonl">
+              <span class="label">With snapshots <code>.jsonl</code></span>
+              <span class="hint">Session metadata + every snapshot, one JSON object per line.</span>
+            </a>
+          </div>
+        </div>
+        <form action="/workbench/{{ chat.id }}/delete" method="post" class="wb-form" data-confirm="Delete this session? This cannot be undone." data-confirm-label="Delete">
+          <button type="submit" class="wb-icon-btn danger" data-tooltip="Delete session" aria-label="Delete session">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    {# Title renames inline: the pencil button swaps the h1's text for an input
+       in place (ACS-257) — see the wb-inline-rename script below. #}
+
+    {# ---- Single-pane composer (default mode) --------------------------------
+       Hidden when the compare pane is active. The session chrome above (title /
+       rename / delete / export / mode toggle) is shared and stays visible in
+       both modes. #}
+    <div class="wb-mode-pane" data-mode-pane="single" {% if active_mode == 'compare' %}hidden{% endif %}>
+    <p class="wb-key-line">
+      <strong>Base model — raw next-token prediction, not a chat assistant.</strong>
+      It continues your text rather than answering questions. Try
+      <code>The capital of France is</code> instead of
+      <code>What is the capital of France?</code>. Edit the prompt freely, then
+      click <strong>Continue</strong> to stream tokens onto the end. Usage is
+      charged to the API key selected below.
+    </p>
+
+    {# Chips only show on an empty prompt: returning users land in their
+       last session with prompt_text populated, and clicking a chip would
+       silently wipe their work. The always-visible .wb-key-line above
+       carries the educational copy for everyone; chips are the
+       first-time-only nudge. #}
+    {% if not chat.prompt_text %}
+    <div class="wb-starters" aria-label="Example continuation prompts">
+      <span class="wb-starters-label">Try a starter:</span>
+      <button type="button" class="wb-starter" data-prompt="The capital of France is">Factual continuation</button>
+      <button type="button" class="wb-starter" data-prompt="Once upon a time, in a kingdom far away,">Story</button>
+      <button type="button" class="wb-starter" data-prompt="# Python&#10;def fibonacci(n):">Code</button>
+    </div>
+    {% endif %}
+
+    {% if no_key %}
+    <p class="error">
+      You don't have an active API key. Visit <a href="/dashboard">your dashboard</a> to create one.
+    </p>
+    {% endif %}
+
+    <p id="wb-error" class="error" style="{% if not error %}display:none;{% endif %}">{{ error or "" }}</p>
+
+    <div id="wb-coldboot" class="wb-coldboot" role="status" aria-live="polite">
+      <div class="wb-coldboot-progress" aria-hidden="true"></div>
+      <div class="wb-coldboot-body">
+        <span class="wb-coldboot-text" id="wb-coldboot-text">Sending request to model...</span>
+        <span class="wb-coldboot-timer" id="wb-coldboot-timer">0:00</span>
+      </div>
+    </div>
+
+    <form id="wb-form" class="wb-form" method="post" action="/workbench/{{ chat.id }}/generations"
+          data-chat-id="{{ chat.id }}">
+      <textarea id="wb-prompt" name="prompt" rows="18" required autocomplete="off" spellcheck="false"
+                class="wb-textarea"
+                placeholder="The capital of France is"
+                {% if no_key %}disabled{% endif %}>{{ chat.prompt_text }}</textarea>
+
+      {# Read-only companion view (ACS-165): when logprobs is on, the just-generated
+         completion's tokens are colour-coded here. It sits directly under the
+         output box it mirrors (ACS-254 — parked below the whole composer it read
+         as unrelated); the editable textarea itself can't render per-token
+         colour. Click a token for the top-k alternatives. #}
+      <div id="wb-heatmap-wrap" class="wb-heatmap-wrap" hidden>
+        <div class="wb-heatmap-head">Heatmap — read-only view of the latest completion</div>
+        <div id="wb-heatmap" class="wb-heatmap" aria-live="polite"></div>
+      </div>
+
+      <div class="wb-controls">
+        <label>Model
+          <div class="wb-select" id="wb-model-picker">
+            <button type="button" class="wb-select-trigger" id="wb-model-trigger"
+                    aria-haspopup="listbox" aria-expanded="false" {% if no_key %}disabled{% endif %}>
+              <span class="wb-select-label" id="wb-model-label">—</span>
+              {# ACS-80: static policy chip mirrors the picked option's label.
+                 Populated/swapped by applySelection() in the picker JS below. #}
+              <span class="wb-policy wb-trigger-policy" id="wb-model-policy" hidden></span>
+              <svg class="wb-select-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="wb-select-menu" id="wb-model-menu" role="listbox" hidden>
+              {# ACS-80 + ACS-98: keep-warm policy / warmth chip. "Always on"
+                 and "Needs startup" are registry-config-derived; the soft
+                 "recently used - usually warm" hint comes from the in-memory
+                 last_completion_at map. All computed at render time — no live
+                 polling, no Modal RPC. The accurate live count is ACS-62.
+                 Option markup is shared with the compare lanes via
+                 _model_option.html (ACS-181) so the two pickers can't drift. #}
+              {% for m in available_models %}
+              {% include "_model_option.html" %}
+              {% endfor %}
+            </div>
+            <input type="hidden" name="model" id="wb-model" value="{{ selected_model_id or '' }}">
+          </div>
+        </label>
+        {# API key sits next to Model on the top row (ACS-190): both are "pick a
+           thing" selects, so they pair visually and keep the grid balanced. #}
+        <label>API key
+          <select id="wb-api-key" name="api_key_id" class="wb-keyselect" {% if no_key %}disabled{% endif %}>
+            {% for k in keys %}
+            <option value="{{ k.id }}" data-prefix="{{ k.key_prefix }}" {% if k.id == selected_key_id %}selected{% endif %}>{{ k.name or "Unnamed key" }} ({{ k.key_prefix }})</option>
+            {% endfor %}
+          </select>
+          {# Transient confirmation that changing the key took effect — the
+             choice is persisted on the next Continue (see workbench.py). #}
+          <span id="wb-key-confirm" class="wb-key-confirm" role="status" aria-live="polite"></span>
+        </label>
+        <label><span class="term-help" tabindex="0" data-help="Upper limit on how many tokens one Continue can generate. Generation can stop earlier (stop text or a natural end).">Max tokens</span>
+          <input type="number" id="wb-max-tokens" name="max_tokens" class="wb-num"
+                 value="{{ chat.last_max_tokens }}" min="1" max="{{ max_max_tokens }}">
+          {# Surface the cap inline (ACS-346) so it's discoverable before a
+             request trips it, matching how Compare shows its lane cap. #}
+          <span class="wb-cap-hint">Max {{ "{:,}".format(max_max_tokens) }} tokens</span>
+        </label>
+        <label><span class="term-help" tabindex="0" data-help="How random sampling is. 0 always picks the most likely token; 1 samples the model's raw probabilities; higher values get increasingly chaotic.">Temperature</span>
+          <span class="wb-temp-control">
+            <input type="range" id="wb-temperature-range" class="wb-range"
+                   min="0" max="5" step="0.1" value="{{ chat.last_temperature }}"
+                   aria-label="Temperature slider">
+            <input type="number" id="wb-temperature" name="temperature" class="wb-num wb-num-temp"
+                   value="{{ chat.last_temperature }}" min="0" max="100" step="0.1">
+          </span>
+          <small class="wb-temp-hint">0–5 on the slider, up to 100 in the box. Above ~10 barely changes anything.</small>
+        </label>
+      </div>
+
+      {# Sampling-parameters panel (ACS-165; placement fixed ACS-188) — grouped
+         with the model/param controls above as an IN-FLOW disclosure (expands
+         downward, pushing content, instead of a floating popover that overflowed
+         the footer). Same knobs as the compare lanes; named inputs so the
+         existing FormData submit picks them up and the route shapes them via
+         _build_lane_body. Numeric inputs clamp on commit (see JS below). #}
+      <details class="wb-sampling" id="wb-sampling">
+        <summary class="wb-sampling-summary">Sampling parameters</summary>
+        {# step="any" on the float knobs so a typed off-grid value (e.g.
+           top_p=0.42) doesn't trip HTML5 stepMismatch and silently block the
+           form submit — the arrows would only step by 0.05 anyway, and the
+           server clamps/validates via _build_lane_body regardless. The integer
+           knobs keep step="1" (and the clamp JS below rounds them). #}
+        <div class="wb-sampling-grid">
+          <label><span class="term-help" tabindex="0" data-help="Nucleus sampling: sample only from the smallest set of tokens whose probabilities add up to this value. 1 = off.">top_p</span> <input type="number" name="top_p" class="wb-num" value="1" min="0" max="1" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Only the k most likely next tokens can be picked: k = 1 always takes the single top token, k = 50 chooses among the top 50. -1 = no limit.">top_k</span> <input type="number" name="top_k" class="wb-num" value="-1" min="-1" step="1"></label>
+          <label><span class="term-help" tabindex="0" data-help="Drops long-shot tokens relative to the best one: at 0.1, any token less than 10% as likely as the top token is excluded. 0 = off.">min_p</span> <input type="number" name="min_p" class="wb-num" value="0" min="0" max="1" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Penalises every token that has already appeared at least once — positive values nudge the model toward new words and topics.">presence</span> <input type="number" name="presence_penalty" class="wb-num" value="0" min="-2" max="2" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Penalises tokens more the more often they have already appeared — positive values reduce repetition.">frequency</span> <input type="number" name="frequency_penalty" class="wb-num" value="0" min="-2" max="2" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Scales down the score of already-seen tokens. 1 = off; above 1 discourages repeats, below 1 encourages them.">repetition</span> <input type="number" name="repetition_penalty" class="wb-num" value="1" min="0" max="2" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Makes sampling reproducible: the same prompt, settings and seed give the same output. Empty = different result each run.">seed</span> <input type="number" id="wb-seed" name="seed" class="wb-num" placeholder="random" min="0" step="1"></label>
+          <label><span class="term-help" tabindex="0" data-help="When the model produces this exact text, generation stops there (the stop text itself is not included).">stop</span> <input type="text" id="wb-stop-seq" name="stop" class="wb-num" placeholder="(none)"></label>
+        </div>
+      </details>
+
+      {# Logprobs / heatmap toggle surfaced at composer level (ACS-188) so this
+         headline feature isn't buried at the bottom of a collapsed panel. The
+         count input is disabled (FormData omits it → logprobs off) until the box
+         is ticked; ticking also reveals the read-only heatmap companion below. #}
+      <label class="wb-logprobs-toggle">
+        <input type="checkbox" id="wb-logprobs-on"> <span class="term-help" tabindex="0" data-help="Record each generated token's probability (its logprob) plus the top-k alternatives, and colour the completion by them in the panel under the output box. The number sets k.">Heatmap</span>
+        <input type="number" id="wb-logprobs" name="logprobs" class="wb-num" value="5" min="1" max="20" step="1" disabled>
+        <span class="wb-logprobs-hint">colour each generated token by probability (panel under the output box)</span>
+      </label>
+      {# Gradient legend — only meaningful (and visible) while the heatmap is
+         on; same visual as the loom legend (ACS-264). #}
+      <p class="wb-legend" id="wb-legend" hidden>
+        <span>token probability</span>
+        <span class="swatch" aria-hidden="true"></span>
+        <span>low&nbsp;→&nbsp;high</span>
+        <span class="wb-legend-hint">Click a token to pin its alternatives.</span>
+      </p>
+
+      {# Continue / Stop on their own action row (ACS-188) — no longer sharing a
+         row with the sampling settings toggle. #}
+      <div class="wb-composer-actions">
+        <span id="wb-streaming" class="wb-streaming-indicator">streaming…</span>
+        <span class="spacer"></span>
+        <button id="wb-stop" type="button" class="secondary" style="display:none;">Stop</button>
+        <button id="wb-continue" type="submit" {% if no_key %}disabled{% endif %}>Continue</button>
+      </div>
+    </form>
+
+    <p id="wb-last-meta" class="wb-meta"></p>
+
+    {% if snapshots %}
+    <details class="wb-snapshots" open>
+      <summary>{{ snapshots|length }} snapshot{{ "s" if snapshots|length != 1 else "" }} — expand a row to inspect or copy; <em>Revert</em> resets the prompt to that point</summary>
+      <div class="snapshots-body">
+        <ul>
+          {% for s in snapshots %}
+          <li>
+            <details class="wb-snap-item" data-snap-id="{{ s.id }}">
+              <summary>
+                {# Server renders UTC (labeled, for the no-JS case); wireSnapshotHandlers
+                   rewrites this to the viewer's local time from data-ts, matching how
+                   Compare mode formats its timestamps (ACS-346). #}
+                <span class="ts" data-ts="{{ s.ts.isoformat() }}">{{ s.ts.strftime('%Y-%m-%d %H:%M') }} UTC</span>
+                <span class="meta">+{{ s.n_completion }} tok{% if s.cancelled %} <span class="muted">(cancelled)</span>{% endif %}</span>
+                {% set model_label = model_labels.get(s.model) if s.model else None %}
+                <span class="model">{{ model_label or s.model or "—" }}</span>
+                <span class="summary-spacer"></span>
+                <form action="/workbench/{{ chat.id }}/revert/{{ s.id }}" method="post"
+                      data-confirm="Revert prompt to the state before this generation? Your current prompt text will be replaced."
+                      data-confirm-label="Revert">
+                  <button type="submit" class="ghost small">Revert</button>
+                </form>
+              </summary>
+              <div class="wb-snap-body">
+                <pre class="wb-snap-text"><span class="wb-snap-prefix">{{ s.prompt_before }}</span><span class="wb-snap-completion">{{ s.completion_text }}</span></pre>
+                {# Stored per-token logprobs (ACS-189), already in the normalised
+                   [{token, logprob, top:[...]}] heatmap shape. When present, the
+                   snapshot JS re-colours the completion span above via the shared
+                   acsAppendHeatmap primitive on first expand. Absent (NULL /
+                   logprobs off) → the plain completion text stays as-is.
+                   `tojson` handles </script> + < escaping in the blob. #}
+                {% if s.logprobs %}
+                <script type="application/json" class="wb-snap-logprobs">{{ s.logprobs | tojson }}</script>
+                {% endif %}
+                <div class="wb-snap-buttons">
+                  <button type="button" class="ghost small wb-snap-copy"
+                          data-copy-target="prefix-{{ s.id }}">Copy prefix</button>
+                  <button type="button" class="ghost small wb-snap-copy"
+                          data-copy-target="full-{{ s.id }}">Copy prefix + generated</button>
+                  <span class="copied" data-copied-for="{{ s.id }}">copied</span>
+                  <template id="prefix-{{ s.id }}">{{ s.prompt_before }}</template>
+                  <template id="full-{{ s.id }}">{{ s.prompt_before }}{{ s.completion_text }}</template>
+                </div>
+              </div>
+            </details>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </details>
+    {% endif %}
+    </div>{# /data-mode-pane="single" #}
+
+    {# ---- Shared model-picker keyboard a11y (ACS-183) ------------------------
+       ONE keyboard + ARIA-activedescendant handler for the custom button+listbox
+       picker, used by BOTH the single-pane composer and every cloned compare
+       lane. Defined here (before the compare include, so it exists when compare's
+       IIFE runs) and exposed as window.acsWireListboxKeys so neither call site
+       has to duplicate the arrow/type-ahead/Escape logic.
+
+       Everything is scoped to the passed-in picker root — option ids are
+       generated per-picker at wire time (never hardcoded in _model_option.html),
+       so N cloned lanes don't collide on ids or aria-activedescendant. #}
+    <script>
+    (function () {
+      let pickerSeq = 0;
+      // Wire keyboard operability + ARIA listbox semantics onto one picker.
+      //   opts.trigger  — the button that opens the menu
+      //   opts.menu     — the role="listbox" element
+      //   opts.select   — (value) => void, commit a choice (existing applySelection)
+      //   opts.getValue — () => currently-committed value (for initial active option)
+      // Mouse behaviour + the status chips are untouched; this only adds keys.
+      window.acsWireListboxKeys = function (opts) {
+        const trigger = opts.trigger;
+        const menu = opts.menu;
+        const commit = opts.select;
+        const getValue = opts.getValue;
+        const pid = 'wb-lb-' + (++pickerSeq);
+        let activeIdx = -1;
+        let typeBuffer = '';
+        let typeTimer = null;
+
+        // Menu is a focus target so DOM focus can rest on it while the visible
+        // "active option" is tracked via aria-activedescendant (options keep
+        // no DOM focus — that's the standard listbox pattern).
+        menu.setAttribute('tabindex', '-1');
+
+        function optionEls() {
+          return Array.prototype.slice.call(menu.querySelectorAll('.wb-select-option'));
+        }
+        // Assign per-picker ids once so aria-activedescendant can reference them
+        // without colliding across cloned lanes.
+        function ensureIds(els) {
+          els.forEach(function (el, i) {
+            if (!el.id) el.id = pid + '-opt-' + i;
+          });
+        }
+        function setActive(idx, els) {
+          els = els || optionEls();
+          els.forEach(function (el) { el.classList.remove('is-active'); });
+          activeIdx = idx;
+          if (idx >= 0 && idx < els.length) {
+            const el = els[idx];
+            el.classList.add('is-active');
+            menu.setAttribute('aria-activedescendant', el.id);
+            // Keep the active option in view within the scrolling menu.
+            if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+          } else {
+            menu.removeAttribute('aria-activedescendant');
+          }
+        }
+        function isOpen() { return !menu.hidden; }
+        // Runs once the menu has been shown (hidden=false), regardless of who
+        // opened it — mouse click OR keyboard. This is the single place that
+        // moves DOM focus onto the listbox + seeds the active option, so
+        // click-to-open users get working arrow keys too (the trigger click
+        // listener below invokes it). setActive() also clears any stale
+        // highlight, so a fresh open never shows a leftover .is-active row.
+        function openInit() {
+          const els = optionEls();
+          ensureIds(els);
+          // Start the highlight on the committed option (or the first one).
+          const cur = getValue ? getValue() : null;
+          let idx = els.findIndex(function (el) { return el.dataset.value === cur; });
+          if (idx < 0) idx = els.length ? 0 : -1;
+          setActive(idx, els);
+          menu.focus();
+        }
+        function openMenu() {
+          if (trigger.disabled) return;
+          if (menu.hidden) trigger.click();  // reuse existing open() wiring → click listener runs openInit
+        }
+        function closeMenu(returnFocus) {
+          if (!menu.hidden) trigger.click();  // reuse existing close() wiring
+          setActive(-1);
+          if (returnFocus !== false) trigger.focus();
+        }
+        function move(delta) {
+          const els = optionEls();
+          if (!els.length) return;
+          ensureIds(els);
+          let idx = activeIdx < 0 ? (delta > 0 ? 0 : els.length - 1) : activeIdx + delta;
+          // Clamp at the ends (no wrap — matches a native <select>).
+          idx = Math.max(0, Math.min(els.length - 1, idx));
+          setActive(idx, els);
+        }
+        function commitActive() {
+          const els = optionEls();
+          if (activeIdx >= 0 && activeIdx < els.length) {
+            commit(els[activeIdx].dataset.value);
+          }
+          closeMenu(true);
+        }
+        function labelOf(el) {
+          return (el.dataset.label || el.textContent || '').trim().toLowerCase();
+        }
+        function typeAhead(ch) {
+          const els = optionEls();
+          if (!els.length) return;
+          if (typeTimer) clearTimeout(typeTimer);
+          const lower = ch.toLowerCase();
+          ensureIds(els);
+          // When the buffer is empty and the user repeats a single letter, CYCLE
+          // through the options that start with it (native <select> behaviour)
+          // rather than accumulating "ll" which would match nothing.
+          const cycle = typeBuffer === '' || (typeBuffer.length === 1 && typeBuffer === lower);
+          typeBuffer += lower;
+          typeTimer = setTimeout(function () { typeBuffer = ''; }, 700);
+          let match = -1;
+          if (cycle) {
+            typeBuffer = lower;  // keep the buffer a single char while cycling
+            // First option after the current active one whose label starts with
+            // the letter; wraps around so repeated presses rotate.
+            for (let i = 1; i <= els.length; i++) {
+              const j = ((activeIdx < 0 ? -1 : activeIdx) + i) % els.length;
+              if (labelOf(els[j]).indexOf(lower) === 0) { match = j; break; }
+            }
+          } else {
+            match = els.findIndex(function (el) { return labelOf(el).indexOf(typeBuffer) === 0; });
+          }
+          if (match >= 0) setActive(match, els);
+        }
+
+        // Mouse OR keyboard open both flip menu.hidden via the existing click
+        // handler (registered before this one, since the helper is wired last),
+        // so this single click listener is where DOM focus lands on the listbox
+        // and the active option is seeded — click-to-open users get working
+        // arrow keys, and every open clears stale highlight state.
+        trigger.addEventListener('click', function () {
+          if (trigger.disabled) return;
+          if (!menu.hidden) openInit();  // just opened
+          else setActive(-1);            // just closed via the trigger
+        });
+        // Keys on the trigger: open the menu.
+        trigger.addEventListener('keydown', function (e) {
+          if (trigger.disabled) return;
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!isOpen()) openMenu();
+          }
+        });
+        // Keys while the listbox has focus: navigate / select / dismiss.
+        menu.addEventListener('keydown', function (e) {
+          switch (e.key) {
+            case 'ArrowDown': e.preventDefault(); move(1); break;
+            case 'ArrowUp':   e.preventDefault(); move(-1); break;
+            case 'Home':      e.preventDefault(); setActive(0); break;
+            case 'End':       e.preventDefault(); setActive(optionEls().length - 1); break;
+            case 'Enter':
+            case ' ':         e.preventDefault(); commitActive(); break;
+            case 'Escape':    e.preventDefault(); closeMenu(true); break;
+            case 'Tab':
+              // Return focus to the trigger (the focused menu is about to be
+              // display:none'd — without this, focus would revert to <body> and
+              // the next Tab would jump to the top of the page). We do NOT
+              // preventDefault, so the browser's native Tab then moves from the
+              // trigger to the next control (Shift+Tab to the previous one).
+              closeMenu(true);
+              break;
+            default:
+              // Printable single characters drive type-ahead.
+              if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                typeAhead(e.key);
+              }
+          }
+        });
+        // Mouse hover keeps the keyboard highlight in sync so the two don't
+        // fight when a user mixes input methods.
+        menu.addEventListener('mousemove', function (e) {
+          const btn = e.target.closest('.wb-select-option');
+          if (!btn) return;
+          const els = optionEls();
+          const idx = els.indexOf(btn);
+          if (idx >= 0 && idx !== activeIdx) setActive(idx, els);
+        });
+      };
+    })();
+    </script>
+
+    {# ---- Compare pane -------------------------------------------------------
+       Multi-lane "one prompt across N models" surface, folded in as a mode of
+       this same workbench session (ACS-163). Its DOM + JS are self-contained
+       (cmp-* ids, own IIFE); it shares the same ChatGeneration persistence and
+       the _build_lane_body path via POST /workbench/{id}/compare. #}
+    <div class="wb-mode-pane" data-mode-pane="compare" {% if active_mode != 'compare' %}hidden{% endif %}>
+      {% include "workbench_compare.html" %}
+    </div>
+
+    {% if running_generation %}
+    <script id="wb-resume-data" type="application/json">{{ {"id": running_generation.id, "prompt_before": running_generation.prompt_before, "started_at_ms": running_generation.started_at_ms} | tojson }}</script>
+    {% endif %}
+
+    <script>
+    (function() {
+      const form = document.getElementById('wb-form');
+      const chatId = form.dataset.chatId;
+      const textarea = document.getElementById('wb-prompt');
+
+      // Starter-prompt chips: clicking one drops a continuation-style
+      // example into the textarea so first-time users see what a good
+      // base-model prompt looks like. We replace whatever the user has
+      // typed (the chip is an opt-in shortcut, not an append).
+      document.querySelectorAll('.wb-starter').forEach(function(chip) {
+        chip.addEventListener('click', function() {
+          const prompt = chip.getAttribute('data-prompt') || '';
+          textarea.value = prompt;
+          textarea.focus();
+          // Move caret to end so the user can keep typing the continuation.
+          const end = textarea.value.length;
+          textarea.setSelectionRange(end, end);
+        });
+      });
+      // API-key picker confirmation: the chosen key is silently persisted on
+      // the next Continue, so flash a brief "using key <prefix>" note when the
+      // user changes the dropdown to make that selection visible.
+      const keySelect = document.getElementById('wb-api-key');
+      const keyConfirm = document.getElementById('wb-key-confirm');
+      let keyConfirmTimer = null;
+      if (keySelect && keyConfirm) {
+        keySelect.addEventListener('change', function () {
+          const opt = keySelect.options[keySelect.selectedIndex];
+          const prefix = opt ? (opt.getAttribute('data-prefix') || '') : '';
+          keyConfirm.innerHTML = 'Using key <code>' + prefix + '</code>';
+          keyConfirm.classList.add('show');
+          if (keyConfirmTimer) clearTimeout(keyConfirmTimer);
+          keyConfirmTimer = setTimeout(function () {
+            keyConfirm.classList.remove('show');
+          }, 2500);
+        });
+      }
+
+      const continueBtn = document.getElementById('wb-continue');
+      const stopBtn = document.getElementById('wb-stop');
+      const streamingTag = document.getElementById('wb-streaming');
+      const errorEl = document.getElementById('wb-error');
+      const lastMeta = document.getElementById('wb-last-meta');
+      const coldboot = document.getElementById('wb-coldboot');
+      const coldbootTimer = document.getElementById('wb-coldboot-timer');
+      const coldbootText = document.getElementById('wb-coldboot-text');
+      // Grace delay before the cold-boot banner shows, so a warm request (first
+      // token in well under this window) never flashes it (ACS-145). A genuinely
+      // cold model keeps the request pending past the delay → banner appears.
+      let coldbootGraceTimer = null;
+      const COLDBOOT_GRACE_MS = 1500;
+
+      // Temperature slider <-> number two-way sync (ACS-145). Only the number
+      // carries name="temperature", so the slider just drives it (and vice versa).
+      const tempRange = document.getElementById('wb-temperature-range');
+      const tempNumber = document.getElementById('wb-temperature');
+      if (tempRange && tempNumber) {
+        tempRange.addEventListener('input', () => { tempNumber.value = tempRange.value; });
+        tempNumber.addEventListener('input', () => { tempRange.value = tempNumber.value; });
+        // The box accepts free text (HTML `max` only bounds the spinner), so a
+        // typed value can exceed 100. The server clamps anyway, but clamp on
+        // commit so what you see is what runs.
+        tempNumber.addEventListener('change', () => {
+          const n = parseFloat(tempNumber.value);
+          if (!Number.isNaN(n)) {
+            tempNumber.value = String(Math.max(0, Math.min(100, n)));
+            tempRange.value = tempNumber.value;
+          }
+        });
+      }
+
+      // ---- sampling params + logprobs (ACS-165) ---------------------------
+      // Clamp numeric sampling inputs on commit so what you see is what runs
+      // (HTML min/max only bounds spinner arrows; a typed value can exceed
+      // them — the server clamps anyway via _build_lane_body). Matches the
+      // compare lanes' clamp-on-change (#159).
+      const samplingPanel = document.getElementById('wb-sampling');
+      if (samplingPanel) {
+        samplingPanel.querySelectorAll('input[type="number"]').forEach((inp) => {
+          const lo = inp.getAttribute('min');
+          const hi = inp.getAttribute('max');
+          // step="1" marks the integer knobs (top_k / seed / logprobs) — round
+          // a typed decimal so top_k=2.5 can't reach the int-typed Form param and
+          // 422 the whole request.
+          const isInt = inp.getAttribute('step') === '1';
+          if (lo == null && hi == null && !isInt) return;
+          inp.addEventListener('change', () => {
+            if (inp.value === '') return;
+            let n = parseFloat(inp.value);
+            if (Number.isNaN(n)) return;
+            if (isInt) n = Math.round(n);
+            if (lo != null) n = Math.max(parseFloat(lo), n);
+            if (hi != null) n = Math.min(parseFloat(hi), n);
+            inp.value = String(n);
+          });
+        });
+      }
+
+      // Logprobs toggle: the count input is disabled (so FormData omits it, i.e.
+      // logprobs off) until the checkbox is ticked; ticking it also reveals the
+      // read-only heatmap companion panel.
+      const logprobsOn = document.getElementById('wb-logprobs-on');
+      const logprobsCount = document.getElementById('wb-logprobs');
+      const heatmapWrap = document.getElementById('wb-heatmap-wrap');
+      const heatmapEl = document.getElementById('wb-heatmap');
+      const heatmapLegend = document.getElementById('wb-legend');
+      function logprobsEnabled() { return !!(logprobsOn && logprobsOn.checked); }
+      if (logprobsOn && logprobsCount) {
+        logprobsOn.addEventListener('change', () => {
+          logprobsCount.disabled = !logprobsOn.checked;
+          if (heatmapWrap) heatmapWrap.hidden = !logprobsOn.checked;
+          if (heatmapLegend) heatmapLegend.hidden = !logprobsOn.checked;
+        });
+      }
+
+      // ---- custom model picker --------------------------------------------
+      // Native <select> can't host the icons + hover tooltip we want, so the
+      // picker is rendered as a button + listbox driven from JS. The
+      // selected option's id lives on the hidden #wb-model input the form
+      // submits.
+      const modelPicker = document.getElementById('wb-model-picker');
+      const modelTrigger = document.getElementById('wb-model-trigger');
+      const modelMenu = document.getElementById('wb-model-menu');
+      const modelLabel = document.getElementById('wb-model-label');
+      const modelHidden = document.getElementById('wb-model');
+
+      function applySelection(id) {
+        const opts = modelMenu.querySelectorAll('.wb-select-option');
+        let selectedLabel = '';
+        let selectedOpt = null;
+        opts.forEach(opt => {
+          const isSel = opt.dataset.value === id;
+          opt.setAttribute('aria-selected', isSel ? 'true' : 'false');
+          if (isSel) {
+            selectedLabel = opt.dataset.label || opt.dataset.value;
+            selectedOpt = opt;
+          }
+        });
+        if (!selectedLabel && opts.length) {
+          // Fall back to first option if the stored id is no longer in the registry.
+          const first = opts[0];
+          id = first.dataset.value;
+          selectedLabel = first.dataset.label || first.dataset.value;
+          first.setAttribute('aria-selected', 'true');
+          selectedOpt = first;
+        }
+        modelHidden.value = id;
+        modelLabel.textContent = selectedLabel;
+        // ACS-80: mirror the picked option's static policy chip onto the trigger.
+        const triggerChip = document.getElementById('wb-model-policy');
+        if (triggerChip) {
+          if (selectedOpt && selectedOpt.dataset.policyLabel) {
+            triggerChip.textContent = selectedOpt.dataset.policyLabel;
+            // Mirror the picked option's exact policy modifier
+            // (always-on / warm / needs-startup) so the trigger chip matches.
+            const srcChip = selectedOpt.querySelector('.wb-policy');
+            let mod = 'wb-policy-needs-startup';
+            if (srcChip && srcChip.classList.contains('wb-policy-always-on')) {
+              mod = 'wb-policy-always-on';
+            } else if (srcChip && srcChip.classList.contains('wb-policy-warm')) {
+              mod = 'wb-policy-warm';
+            }
+            triggerChip.className = 'wb-policy wb-trigger-policy ' + mod;
+            triggerChip.title = srcChip ? (srcChip.getAttribute('title') || '') : '';
+            triggerChip.hidden = false;
+          } else {
+            triggerChip.hidden = true;
+          }
+        }
+      }
+
+      function openModelMenu() {
+        modelMenu.hidden = false;
+        modelTrigger.setAttribute('aria-expanded', 'true');
+      }
+      function closeModelMenu() {
+        modelMenu.hidden = true;
+        modelTrigger.setAttribute('aria-expanded', 'false');
+      }
+
+      if (modelPicker) {
+        applySelection(modelHidden.value);
+        modelTrigger.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (modelTrigger.disabled) return;
+          if (modelMenu.hidden) openModelMenu(); else closeModelMenu();
+        });
+        modelMenu.addEventListener('click', (e) => {
+          const btn = e.target.closest('.wb-select-option');
+          if (!btn) return;
+          // Don't dismiss when the user clicks the info icon — that's a
+          // hover-tooltip target, not a selection action.
+          if (e.target.closest('.wb-info')) {
+            e.stopPropagation();
+            return;
+          }
+          applySelection(btn.dataset.value);
+          closeModelMenu();
+        });
+        document.addEventListener('click', (e) => {
+          if (!modelPicker.contains(e.target)) closeModelMenu();
+        });
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') closeModelMenu();
+        });
+        // ACS-183: keyboard operability + ARIA-activedescendant via the shared
+        // helper (defined before the compare include). Mouse behaviour above is
+        // untouched; this only layers on the key handlers.
+        if (window.acsWireListboxKeys) {
+          window.acsWireListboxKeys({
+            trigger: modelTrigger,
+            menu: modelMenu,
+            select: applySelection,
+            getValue: () => modelHidden.value,
+          });
+        }
+      }
+      let controller = null;
+      let coldbootStart = 0;
+      let coldbootInterval = null;
+      // Server-authoritative offset: once the wrapper sends a status frame
+      // with elapsed_ms, we sync the timer so retries (which the client can't
+      // see) stay reflected in the displayed elapsed time.
+      let coldbootServerOffsetMs = 0;
+      // Container-reported boot stage (ACS-272): when the serving container
+      // has published a real stage ("Loading model weights", ...) the status
+      // frame carries stage_label and it wins over the elapsed-time guess
+      // below. Null until the first stage frame arrives. Monotonic within a
+      // banner: once a real container stage is seen, the inferred
+      // "waiting_for_gpu" (which any transient Dict-read failure degrades to)
+      // can no longer overwrite it — no backward flicker on one bad poll.
+      let coldbootStageLabel = null;
+      let coldbootSawRealStage = false;
+
+      // Elapsed-time-driven phase labels — the FALLBACK used only before any
+      // status frame arrives, and for models with no Modal app name (legacy
+      // env entries), whose frames carry no stage. For real models the server
+      // always sends a stage label (a fresh container stage, or the inferred
+      // "Waiting for Modal to allocate GPUs" when there is none — including
+      // Dict outages and not-yet-redeployed serving apps). Numbers are minute
+      // thresholds.
+      function phaseLabelFromElapsedMs(elapsedMs, phase) {
+        if (phase === 'sending') return 'Sending request to model...';
+        const m = elapsedMs / 60000;
+        if (m < 3)  return 'Container starting';
+        if (m < 7)  return 'Loading weights from volume';
+        if (m < 10) return 'Initializing vLLM engine';
+        if (m < 13) return 'Almost ready';
+        return 'Modal allocation is slow today (capacity-constrained)';
+      }
+
+      function setStreaming(on) {
+        continueBtn.style.display = on ? 'none' : '';
+        stopBtn.style.display = on ? '' : 'none';
+        streamingTag.style.display = on ? '' : 'none';
+        textarea.readOnly = on;
+      }
+      function showError(msg) { errorEl.textContent = msg; errorEl.style.display = ''; }
+      function clearError() { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+
+      function fmtElapsed(ms) {
+        const total = Math.floor(ms / 1000);
+        const m = Math.floor(total / 60);
+        const s = total % 60;
+        return m + ':' + (s < 10 ? '0' : '') + s;
+      }
+      // ``startTs`` is the original submit-click time so the timer reflects
+      // the user's actual cold-boot wait; the displayed elapsed is
+      // max(local elapsed, server-reported elapsed). Phase label is
+      // derived from elapsed_ms — see phaseLabelFromElapsedMs.
+      function showColdboot(startTs, phase) {
+        const ph = phase || 'sending';
+        if (coldbootText) {
+          coldbootText.textContent = coldbootStageLabel || phaseLabelFromElapsedMs(0, ph);
+        }
+        if (!coldboot.classList.contains('is-active')) {
+          coldbootStart = startTs || performance.now();
+          coldbootServerOffsetMs = 0;
+          coldbootStageLabel = null;
+          coldbootSawRealStage = false;
+          coldbootTimer.textContent = fmtElapsed(0);
+          coldboot.classList.add('is-active');
+          coldbootInterval = setInterval(() => {
+            const local = performance.now() - coldbootStart;
+            const shown = Math.max(local, coldbootServerOffsetMs);
+            coldbootTimer.textContent = fmtElapsed(shown);
+            // Keep the phase label fresh between status frames so the
+            // user sees the next band as soon as the timer crosses it.
+            if (coldbootText) {
+              coldbootText.textContent =
+                coldbootStageLabel || phaseLabelFromElapsedMs(shown, 'cold_boot');
+            }
+          }, 1000);
+        }
+      }
+      function updateColdbootPhase(phase, elapsedMs, stage, stageLabel) {
+        if (!coldboot.classList.contains('is-active')) return;
+        if (typeof elapsedMs === 'number') {
+          coldbootServerOffsetMs = Math.max(coldbootServerOffsetMs, elapsedMs);
+        }
+        if (stageLabel) {
+          const isReal = stage && stage !== 'waiting_for_gpu';
+          if (isReal || !coldbootSawRealStage) coldbootStageLabel = stageLabel;
+          if (isReal) coldbootSawRealStage = true;
+        }
+        const local = performance.now() - coldbootStart;
+        const shown = Math.max(local, coldbootServerOffsetMs);
+        coldbootTimer.textContent = fmtElapsed(shown);
+        if (coldbootText) {
+          coldbootText.textContent =
+            coldbootStageLabel || phaseLabelFromElapsedMs(shown, phase || 'cold_boot');
+        }
+      }
+      // True when the currently-selected model is flagged always-on (the picker
+      // option carries data-policy-always-on="1"). Such a model can't cold-boot,
+      // so the "Container starting" banner must never arm for it.
+      function selectedModelAlwaysOn() {
+        const opt = modelMenu.querySelector(
+          '.wb-select-option[data-value="' + (modelHidden.value || '') + '"]'
+        );
+        return !!(opt && opt.getAttribute('data-policy-always-on') === '1');
+      }
+      // Arm the banner to appear only if the request is still pending after the
+      // grace window. hideColdboot() cancels it, so a warm/fast response never
+      // flashes the banner (ACS-145). A confirmed cold-boot `status` frame still
+      // calls showColdboot() directly for an immediate, informative banner.
+      function scheduleColdboot(startTs, phase) {
+        // Always-on models never cold-boot: never arm the banner for them, so a
+        // slow first token (warm large model) can't flash "Container starting".
+        if (selectedModelAlwaysOn()) return;
+        if (coldbootGraceTimer) clearTimeout(coldbootGraceTimer);
+        coldbootGraceTimer = setTimeout(() => {
+          coldbootGraceTimer = null;
+          showColdboot(startTs, phase);
+        }, COLDBOOT_GRACE_MS);
+      }
+      function hideColdboot() {
+        if (coldbootGraceTimer) { clearTimeout(coldbootGraceTimer); coldbootGraceTimer = null; }
+        if (coldbootInterval) { clearInterval(coldbootInterval); coldbootInterval = null; }
+        coldboot.classList.remove('is-active');
+      }
+
+      // Title renaming is inline on the h1 itself — see the wb-inline-rename
+      // script at the bottom of this file (ACS-257).
+
+      // Export dropdown: toggle on click, close on outside-click or Escape.
+      const exportToggle = document.getElementById('wb-export-toggle');
+      const exportMenu = document.getElementById('wb-export-menu');
+      const exportRoot = document.getElementById('wb-export-dropdown');
+      function closeExport() {
+        if (!exportMenu || exportMenu.hidden) return;
+        exportMenu.hidden = true;
+        exportToggle.setAttribute('aria-expanded', 'false');
+      }
+      function openExport() {
+        if (!exportMenu) return;
+        exportMenu.hidden = false;
+        exportToggle.setAttribute('aria-expanded', 'true');
+      }
+      if (exportToggle && exportMenu && exportRoot) {
+        exportToggle.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (exportMenu.hidden) openExport(); else closeExport();
+        });
+        document.addEventListener('click', (e) => {
+          if (!exportRoot.contains(e.target)) closeExport();
+        });
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') closeExport();
+        });
+        // Close after the user clicks a menu item (browser handles the download).
+        exportMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => closeExport()));
+      }
+
+      // Active generation id we're subscribed to, if any.
+      let activeGenId = null;
+      // performance.now() at the moment the generation was kicked off, so the
+      // stop handler can render an elapsed-time message without depending on
+      // the SSE done frame (which the optimistic-UI cancel skips).
+      let activeStartTs = null;
+
+      stopBtn.addEventListener('click', () => {
+        if (!activeGenId) return;
+        // Optimistic-UI cancel (ACS-132). Stop should feel instant even
+        // during a Modal cold boot where the server can't tear the upstream
+        // connection down for up to COLD_BOOT_STATUS_INTERVAL_S. Clear the
+        // visible state synchronously; the cancel POST is fire-and-forget.
+        const cancellingGenId = activeGenId;
+        const startTs = activeStartTs;
+        activeGenId = null;
+        activeStartTs = null;
+        stopBtn.disabled = true;
+        hideColdboot();
+        setStreaming(false);
+        if (controller) controller.abort();
+        if (startTs !== null) {
+          const elapsed = (performance.now() - startTs) / 1000;
+          lastMeta.textContent = 'Cancelled after ' + elapsed.toFixed(1) + 's';
+          lastMeta.style.display = '';
+        }
+        fetch('/workbench/' + chatId + '/generations/' + cancellingGenId + '/cancel', {
+          method: 'POST',
+          credentials: 'same-origin',
+        }).catch(() => {});
+      });
+
+      async function submitOnce() {
+        clearError();
+        lastMeta.style.display = 'none';
+
+        // ACS-185: catch an empty / whitespace-only prompt client-side before
+        // firing the request. The backend rejects it with a loud 400 ("either
+        // `prompt` or `prompt_embeds` must be provided and non-empty"); that's
+        // a correct backstop, but the friendly path is an inline warning and no
+        // wasted request.
+        if (!textarea.value.trim()) {
+          showError('Enter a prompt to continue.');
+          textarea.focus();
+          return;
+        }
+
+        const fd = new FormData(form);
+        const t0 = performance.now();
+        setStreaming(true);
+        // Reset the heatmap companion for this run (it rebuilds from the
+        // per-token logprobs as chunks arrive); show it only when logprobs is on.
+        if (heatmapEl) heatmapEl.textContent = '';
+        if (heatmapWrap) heatmapWrap.hidden = !logprobsEnabled();
+        if (heatmapLegend) heatmapLegend.hidden = !logprobsEnabled();
+
+        // Arm the cold-boot banner behind a grace delay so a warm request
+        // doesn't flash it; a still-pending (cold) request surfaces it after
+        // COLDBOOT_GRACE_MS. The wrapper retries indefinitely on cold-boot, so
+        // once shown the banner stays up until tokens flow (or cancel/navigate).
+        hideColdboot();
+        scheduleColdboot(t0, 'sending');
+
+        let genId;
+        try {
+          const resp = await fetch(form.action, {
+            method: 'POST',
+            body: fd,
+            credentials: 'same-origin',
+          });
+          if (!resp.ok) {
+            let msg = 'Request failed (' + resp.status + ')';
+            try {
+              const j = await resp.json();
+              if (j.error && j.error.message) msg = j.error.message;
+              else if (j.detail) msg = (typeof j.detail === 'string') ? j.detail : JSON.stringify(j.detail);
+            } catch (_) {}
+            hideColdboot();
+            setStreaming(false);
+            showError(msg);
+            return;
+          }
+          const j = await resp.json();
+          if (!j || typeof j.generation_id !== 'string') {
+            hideColdboot();
+            setStreaming(false);
+            showError('Malformed response from /generations (missing generation_id).');
+            return;
+          }
+          genId = j.generation_id;
+        } catch (err) {
+          hideColdboot();
+          setStreaming(false);
+          showError('Network error: ' + err.message);
+          return;
+        }
+
+        await subscribeToGeneration(genId, { startTs: t0 });
+      }
+
+      // Friendly prefixes per upstream_kind. The structured ``code`` /
+      // ``status`` fields in the SSE frame are the source of truth (server-
+      // side logs match); the prefix is purely a UX nicety so triage doesn't
+      // see one opaque "Upstream error" for everything from a DNS failure to
+      // a vLLM OOM. Unknown codes fall back to st.message verbatim. Shared
+      // between the real-time ``error`` frame and the late-subscriber
+      // ``done`` frame's failed branch (which carries ``code`` too).
+      const FRIENDLY_PREFIX = {
+        upstream_unreachable: 'Upstream unreachable (likely transient)',
+        upstream_5xx: 'Upstream returned an error',
+        upstream_4xx: 'Upstream rejected the request',
+        vllm_oom: 'Model ran out of memory — try a shorter prompt or fewer tokens',
+        vllm_context_length: 'Prompt + max_tokens exceeds the model context window',
+        vllm_engine_dead: 'Upstream model engine crashed — please retry',
+        vllm_invalid_request: 'Upstream rejected the request as invalid',
+        internal_error: 'Internal error while streaming generation',
+        // ACS-98: GPU allocation + breaker failures, in plain user terms.
+        modal_cold_boot: 'Could not get a GPU in time — try again, or pick a smaller model',
+        cold_boot: 'Could not get a GPU in time — try again, or pick a smaller model',
+        circuit_open: 'This model is having problems — try again in a few minutes',
+      };
+      function formatUpstreamError(st) {
+        const code = (st && typeof st.code === 'string') ? st.code : null;
+        const prefix = (code && FRIENDLY_PREFIX[code]) || null;
+        const baseMsg = (st && st.message) || 'Upstream error';
+        // Show ``(HTTP N)`` only for real HTTP codes; status 0/missing means
+        // a network-layer failure which we already translate to 502 server-
+        // side, but be defensive in case anything else sneaks through.
+        const httpPart = (st && typeof st.status === 'number' && st.status > 0)
+          ? ' (HTTP ' + st.status + ')' : '';
+        const codePart = code ? ' [' + code + ']' : '';
+        return prefix
+          ? (prefix + ': ' + baseMsg + httpPart + codePart)
+          : (baseMsg + httpPart + codePart);
+      }
+
+      // Open SSE to /generations/{id}/events and process replay → live →
+      // done. The `autoResume` option suppresses the cold-boot banner on
+      // mount (the generation has been running for a while; jumping straight
+      // to live tail is the honest UI).
+      async function subscribeToGeneration(genId, opts) {
+        const options = opts || {};
+        const t0 = options.startTs || performance.now();
+        const autoResume = !!options.autoResume;
+        // Baseline the textarea will reset to before each replayed chunk is
+        // re-appended. For fresh submits this is whatever's in the box right
+        // now (what the user clicked Continue on). For auto-resume the
+        // server-rendered chat.prompt_text may or may not already include
+        // the in-flight completion, so we require the backend's
+        // running_generation.prompt_before as the authoritative value.
+        const promptBefore = (typeof options.promptBefore === 'string')
+          ? options.promptBefore
+          : textarea.value;
+
+        activeGenId = genId;
+        activeStartTs = t0;
+        controller = new AbortController();
+        stopBtn.disabled = false;
+        setStreaming(true);
+
+        if (!autoResume && !coldboot.classList.contains('is-active')) {
+          scheduleColdboot(t0, 'sending');
+        }
+
+        let nTokens = 0;
+        let lastUpdate = performance.now();
+        let bannerHidden = false;
+        // Set true once we've applied the initial replay frame (so we don't
+        // re-seed the textarea on a hypothetical second replay).
+        let replayApplied = false;
+
+        try {
+          const resp = await fetch(
+            '/workbench/' + chatId + '/generations/' + genId + '/events',
+            { method: 'GET', credentials: 'same-origin', signal: controller.signal }
+          );
+          if (!resp.ok) {
+            let msg = 'Stream failed (' + resp.status + ')';
+            try {
+              const j = await resp.json();
+              if (j.error && j.error.message) msg = j.error.message;
+              else if (j.detail) msg = (typeof j.detail === 'string') ? j.detail : JSON.stringify(j.detail);
+            } catch (_) {}
+            hideColdboot();
+            showError(msg);
+            return;
+          }
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          // Did we receive a terminal frame (done/error)? If the stream closes
+          // without one — e.g. the server restarted mid-request, which a cold
+          // boot can outlast — we must not vanish silently (see end of loop).
+          let sawTerminal = false;
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) !== -1) {
+              const frame = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              let evName = null;
+              const dataLines = [];
+              for (const line of frame.split('\n')) {
+                if (line.startsWith('event: ')) {
+                  evName = line.slice(7).trim();
+                } else if (line.startsWith('data: ')) {
+                  dataLines.push(line.slice(6));
+                }
+              }
+              if (dataLines.length === 0) continue;
+              const payload = dataLines.join('\n').trim();
+              if (payload === '[DONE]' || !payload) continue;
+
+              if (evName === 'replay') {
+                let r;
+                try { r = JSON.parse(payload); } catch (_) {
+                  console.warn('malformed replay frame', payload);
+                  continue;
+                }
+                if (typeof r.text !== 'string' || typeof r.cursor !== 'number') {
+                  console.warn('replay frame missing text/cursor', r);
+                  continue;
+                }
+                if (!replayApplied) {
+                  textarea.value = promptBefore + r.text;
+                  textarea.scrollTop = textarea.scrollHeight;
+                  nTokens = 0;
+                  replayApplied = true;
+                  if (r.text.length > 0) {
+                    hideColdboot();
+                    bannerHidden = true;
+                  }
+                }
+                continue;
+              }
+
+              if (evName === 'status') {
+                let st;
+                try { st = JSON.parse(payload); } catch (_) { continue; }
+                if (!bannerHidden && !coldboot.classList.contains('is-active')) {
+                  // Status frame arrived but banner was suppressed (autoResume
+                  // path). Show it now so the user sees what's happening.
+                  showColdboot(t0, st.phase || 'cold_boot');
+                }
+                updateColdbootPhase(st.phase, st.elapsed_ms, st.stage, st.stage_label);
+                continue;
+              }
+
+              if (evName === 'error') {
+                sawTerminal = true;
+                let st;
+                try { st = JSON.parse(payload); } catch (_) { st = {}; }
+                hideColdboot();
+                showError(formatUpstreamError(st));
+                continue;
+              }
+
+              if (evName === 'done') {
+                // The optimistic stop handler nulls activeGenId synchronously
+                // and aborts the reader, but a `done` frame that was already
+                // buffered in this chunk can race through one more loop pass.
+                // If the user cancelled, don't let a stale completed-status
+                // frame trigger window.location.reload() and stomp on the
+                // "Cancelled after Ns" meta we just rendered.
+                if (activeGenId !== genId) continue;
+                sawTerminal = true;
+                let st;
+                try { st = JSON.parse(payload); } catch (_) { st = {}; }
+                hideColdboot();
+                const elapsed = (performance.now() - t0) / 1000;
+                const completion = (st.usage && typeof st.usage.completion_tokens === 'number')
+                  ? st.usage.completion_tokens : nTokens;
+                if (st.status === 'completed') {
+                  lastMeta.textContent = completion + ' tokens in ' + elapsed.toFixed(1) + 's (' +
+                    (elapsed > 0 ? (completion / elapsed).toFixed(0) : '0') + ' tok/s)';
+                  lastMeta.style.display = '';
+                  // A snapshot row was created server-side for this completion,
+                  // so the snapshots list is now stale. We used to
+                  // window.location.reload() here, but that wiped the live-built
+                  // logprobs heatmap (#wb-heatmap) — it's only ever populated
+                  // from streaming frames and nothing repopulates it on a fresh
+                  // load (ACS-187). Instead refresh just the snapshots <details>
+                  // in place, preserving the heatmap, the textarea, and scroll
+                  // position. Fire-and-forget + fail soft: on any error we leave
+                  // the UI as-is and never reload. Fall through to the loop so
+                  // the stream close is read and the finally block resets state.
+                  refreshSnapshots().catch(() => {});
+                  continue;
+                }
+                if (st.status === 'cancelled') {
+                  lastMeta.textContent = 'Cancelled after ' + elapsed.toFixed(1) + 's';
+                  lastMeta.style.display = '';
+                } else if (st.status === 'failed') {
+                  // Same kind-aware formatter as the real-time error frame —
+                  // ensures late subscribers (page reload after the error
+                  // already fired) see the same friendly prefix instead of a
+                  // bare error_message.
+                  showError(formatUpstreamError({
+                    code: st.code || null,
+                    status: null,
+                    message: st.error_message || 'Generation failed.',
+                  }));
+                } else {
+                  showError('Generation ended with unknown status: ' + (st.status || '?'));
+                }
+                continue;
+              }
+
+              // Unnamed data frame → completion chunk. The first one means
+              // upstream is warm and tokens are flowing; tear the banner down.
+              if (!bannerHidden) {
+                hideColdboot();
+                bannerHidden = true;
+              }
+              let obj;
+              try { obj = JSON.parse(payload); } catch (_) { continue; }
+              const choices = obj.choices || [];
+              if (choices[0] && typeof choices[0].text === 'string') {
+                const delta = choices[0].text;
+                if (delta) {
+                  textarea.value += delta;
+                  textarea.scrollTop = textarea.scrollHeight;
+                  nTokens += 1;
+                }
+              }
+              // Per-token heatmap (when logprobs is on): append this chunk's
+              // tokens to the companion panel via the shared primitive. The
+              // single-pane relay forwards the raw upstream chunk verbatim, so
+              // choices[0].logprobs is present when logprobs was requested.
+              if (heatmapEl && choices[0] && choices[0].logprobs) {
+                const entries = window.acsNormalizeLogprobs(choices[0].logprobs);
+                if (entries.length) {
+                  window.acsAppendHeatmap(heatmapEl, entries);
+                  heatmapEl.scrollTop = heatmapEl.scrollHeight;
+                }
+              }
+              if (obj.usage && obj.usage.completion_tokens) {
+                nTokens = obj.usage.completion_tokens;
+              }
+            }
+            const now = performance.now();
+            if (bannerHidden && now - lastUpdate > 250) {
+              const elapsed = (now - t0) / 1000;
+              lastMeta.textContent = '~' + nTokens + ' tokens in ' + elapsed.toFixed(1) + 's (' +
+                (elapsed > 0 ? (nTokens / elapsed).toFixed(1) : '0') + ' tok/s)';
+              lastMeta.style.display = '';
+              lastUpdate = now;
+            }
+          }
+          // Stream closed without a terminal done/error frame — typically the
+          // server restarted mid-request (a cold boot can outlast a deploy's
+          // graceful-shutdown window, leaving a "soft" 200 with no completion).
+          // Don't vanish silently: tell the user. The generation may still be
+          // running server-side, so a reload can resume it (running_generation).
+          hideColdboot();
+          if (!sawTerminal) {
+            showError(bannerHidden
+              ? 'Connection interrupted — any output above is partial. Reload to resume if it is still running, or run it again.'
+              : 'Connection interrupted, likely a brief server restart during startup. Reload to check if it is still running, or run it again.');
+          }
+        } catch (err) {
+          if (err.name === 'AbortError') {
+            // Local abort (e.g. pagehide / explicit teardown). Don't surface
+            // as an error; the server keeps generating.
+            hideColdboot();
+          } else {
+            hideColdboot();
+            showError('Network error: ' + err.message);
+          }
+        } finally {
+          setStreaming(false);
+          stopBtn.disabled = false;
+          activeGenId = null;
+          activeStartTs = null;
+          controller = null;
+        }
+      }
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        submitOnce();
+      });
+
+      // ---- auto-resume on page load ---------------------------------------
+      // If the server rendered a `running_generation`, use its
+      // `prompt_before` as the textarea baseline (whatever's currently in
+      // the textarea may be a stale server render that includes the
+      // in-flight completion or not — `prompt_before` is the authoritative
+      // pre-generation prompt). The replay frame then re-paints
+      // `prompt_before + replay.text` immediately.
+      const resumeEl = document.getElementById('wb-resume-data');
+      let resumeData = null;
+      if (resumeEl) {
+        try {
+          resumeData = JSON.parse(resumeEl.textContent);
+        } catch (err) {
+          console.error('failed to parse wb-resume-data', err);
+        }
+      }
+      // Translate the server's real generation start (epoch ms) into a
+      // `performance.now()`-relative origin, so the cold-boot timer ticks from
+      // the true elapsed time on resume instead of restarting at 0:00.
+      function resumeStartTs() {
+        if (resumeData && typeof resumeData.started_at_ms === 'number') {
+          return performance.now() - (Date.now() - resumeData.started_at_ms);
+        }
+        return performance.now();
+      }
+
+      if (resumeData && resumeData.id) {
+        if (typeof resumeData.prompt_before !== 'string') {
+          console.error('wb-resume-data missing prompt_before', resumeData);
+        } else {
+          subscribeToGeneration(resumeData.id, {
+            autoResume: true,
+            promptBefore: resumeData.prompt_before,
+            startTs: resumeStartTs(),
+          });
+        }
+      }
+
+      // bfcache restore: when the browser restores the page from history
+      // cache, our previous fetch() reader was killed but our JS state
+      // wasn't. If we were subscribed to a generation, re-subscribe.
+      window.addEventListener('pageshow', (e) => {
+        if (!e.persisted) return;
+        if (activeGenId) return;  // already subscribed
+        if (resumeData && resumeData.id && typeof resumeData.prompt_before === 'string') {
+          subscribeToGeneration(resumeData.id, {
+            autoResume: true,
+            promptBefore: resumeData.prompt_before,
+            startTs: resumeStartTs(),
+          });
+        }
+      });
+
+      // On pagehide/beforeunload, do NOT abort the SSE — let the connection
+      // die naturally. The server keeps generating; reopening picks up via
+      // running_generation. (Explicitly avoid controller.abort() here.)
+
+      // ---- WARM/COLD PILL — DISABLED ----------------------------------------
+      // The workbench used to render a "ready / needs booting" pill on each
+      // model option (and on the trigger), refreshed every 10 s via
+      // /workbench/models/status. The pill UX was removed in commit 72da33a
+      // because the Modal control-plane lookups it needed were the dominant
+      // workbench TTFB cost (18 s on slow days). If a model is cold when the
+      // user submits, the SSE cold-boot banner handles the wait — same UX
+      // as a first-of-the-day request.
+      //
+      // The CSS for the pill (.wb-status, .wb-status-warm, .wb-status-cold,
+      // .wb-status-dot, .wb-status-icon, .wb-info) is kept in the <style>
+      // block above so future-us can revive the pill cleanly. The JS below
+      // is the matching helper set, preserved here for the same reason.
+      //
+      // To re-enable:
+      //   1. Re-add `<span class="wb-status wb-option-status">` inside each
+      //      <button class="wb-select-option"> in the template, and
+      //      `<span class="wb-status" id="wb-model-status">` inside the
+      //      trigger button.
+      //   2. Re-add `m.warm` / `data-warm` on the rendered options (server
+      //      side: populate `available_models[i]["warm"]` from
+      //      `_is_model_warm` in main.py).
+      //   3. Uncomment the JS block below and call `paintMenuStatuses()` +
+      //      `paintStatus(modelStatus, ...)` from `applySelection()`.
+      //   4. Uncomment the `setInterval(pollModelStates, 10000)` line.
+      /* eslint-disable no-unused-vars */
+      /*
+      const COLD_TOOLTIP = 'First request after a cold start can take 3–10 minutes. The container then stays warm for ~30 minutes after each completion.';
+
+      function statusPillHTML(warm) {
+        if (warm) {
+          return '<span class="wb-status-dot" aria-hidden="true"></span>ready';
+        }
+        return (
+          '<svg class="wb-status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+          '<span>needs booting</span>' +
+          '<span class="wb-info" tabindex="0" role="img" aria-label="What does this mean?" data-tooltip="' + COLD_TOOLTIP + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>'
+        );
+      }
+
+      function paintStatus(el, warm) {
+        if (!el) return;
+        el.className = 'wb-status ' + (warm ? 'wb-status-warm' : 'wb-status-cold');
+        el.dataset.state = warm ? 'warm' : 'cold';
+        el.innerHTML = statusPillHTML(warm);
+      }
+
+      function paintMenuStatuses() {
+        modelMenu.querySelectorAll('.wb-select-option').forEach(opt => {
+          const warm = opt.dataset.warm === '1';
+          paintStatus(opt.querySelector('.wb-option-status'), warm);
+        });
+      }
+
+      async function pollModelStates() {
+        try {
+          const r = await fetch('/workbench/models/status', { credentials: 'same-origin' });
+          if (!r.ok) return;
+          const j = await r.json();
+          if (!modelMenu) return;
+          for (const m of j.models) {
+            const opt = modelMenu.querySelector('.wb-select-option[data-value="' + m.id + '"]');
+            if (!opt) continue;
+            opt.dataset.warm = m.warm ? '1' : '0';
+            paintStatus(opt.querySelector('.wb-option-status'), m.warm);
+            if (modelHidden.value === m.id) {
+              paintStatus(modelStatus, m.warm);
+            }
+          }
+        } catch (_) {}
+      }
+      setInterval(pollModelStates, 10000);
+      */
+      /* eslint-enable no-unused-vars */
+
+      // Snapshot copy buttons. The <template> elements hold the raw text
+      // (HTML-escaped by Jinja, then decoded back to plain text by the parser),
+      // so textContent gives us exactly what to put on the clipboard.
+      // Factored into wireCopy(btn) so it can be re-run on snapshot rows that
+      // get swapped in by refreshSnapshots() after a completion (ACS-187).
+      function wireCopy(btn) {
+        btn.addEventListener('click', async () => {
+          const tmpl = document.getElementById(btn.dataset.copyTarget);
+          if (!tmpl) return;
+          const text = tmpl.content ? tmpl.content.textContent : tmpl.textContent;
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch (_) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (_) {}
+            document.body.removeChild(ta);
+          }
+          const flag = btn.closest('.wb-snap-buttons').querySelector('.copied');
+          if (flag) {
+            flag.classList.add('show');
+            setTimeout(() => flag.classList.remove('show'), 1200);
+          }
+        });
+      }
+
+      // Revert forms use base.html's declarative data-confirm modal, but that
+      // wiring only binds forms present at initial load (querySelectorAll runs
+      // once). Snapshot rows swapped in by refreshSnapshots() therefore need
+      // their submit re-intercepted here via the exposed window.acsConfirm, or
+      // Revert would POST with no confirmation. wireRevertConfirm(form) is
+      // idempotent (dataset.acs187Wired guard) so it's safe to call more than
+      // once on the same form.
+      function wireRevertConfirm(form) {
+        if (form.dataset.acs187Wired === '1') return;
+        form.dataset.acs187Wired = '1';
+        form.addEventListener('submit', (e) => {
+          if (form.dataset.cmConfirmed === '1') { form.dataset.cmConfirmed = ''; return; }
+          if (!window.acsConfirm) return;  // fail open: let the native submit through
+          e.preventDefault();
+          window.acsConfirm({
+            message: form.getAttribute('data-confirm'),
+            danger: form.getAttribute('data-confirm-danger') !== 'false',
+            confirmLabel: form.getAttribute('data-confirm-label') || 'Confirm',
+            onConfirm: function () { form.dataset.cmConfirmed = '1'; form.submit(); },
+          });
+        });
+      }
+
+      // Re-colour a saved snapshot's completion with the logprobs heatmap on
+      // first expand (ACS-189). The row carries its stored per-token logprobs in
+      // a <script type="application/json"> (already in the shared normalised
+      // shape), so we feed them straight to acsAppendHeatmap — NO re-normalise
+      // (unlike the live path, which normalises raw upstream chunks). Prefix
+      // stays plain: the stored entries align with completion_text only. Rows
+      // with no stored logprobs (NULL / logprobs off) are left as plain text.
+      // Idempotent: guarded by dataset.acs189Coloured so re-opens don't re-run.
+      function wireSnapshotHeatmap(item) {
+        if (!item || item.dataset.acs189Wired === '1') return;
+        item.dataset.acs189Wired = '1';
+        const script = item.querySelector('.wb-snap-logprobs');
+        if (!script) return;  // no stored logprobs → leave the plain text
+        const colour = () => {
+          if (item.dataset.acs189Coloured === '1') return;
+          const completion = item.querySelector('.wb-snap-completion');
+          if (!completion || !window.acsAppendHeatmap) return;
+          let entries;
+          try { entries = JSON.parse(script.textContent || '[]'); } catch (_) { return; }
+          if (!Array.isArray(entries) || !entries.length) return;
+          item.dataset.acs189Coloured = '1';
+          // The heatmap rebuilds the completion from `entries` alone. If the
+          // stored logprobs ever cover fewer tokens than the text (a mid-stream
+          // chunk that carried text but no logprobs block, or the persist cap),
+          // the tail of the completion would otherwise vanish — so keep the
+          // original text, colour the covered prefix, then re-append the
+          // uncovered remainder as plain text. No token is ever dropped from
+          // view.
+          const fullText = completion.textContent || '';
+          const coveredText = entries.map((e) => (e && e.token != null ? e.token : '')).join('');
+          completion.textContent = '';  // clear the plain fallback, then colour
+          window.acsAppendHeatmap(completion, entries);
+          if (fullText.startsWith(coveredText) && fullText.length > coveredText.length) {
+            completion.appendChild(document.createTextNode(fullText.slice(coveredText.length)));
+          }
+        };
+        // Colour on first open; if the row is already open (revert re-render),
+        // colour immediately.
+        item.addEventListener('toggle', () => { if (item.open) colour(); });
+        if (item.open) colour();
+      }
+
+      // Wire the copy + revert buttons (and snapshot heatmap) inside a snapshots
+      // subtree.
+      //
+      // includeRevert MUST be false for the initial page load: base.html already
+      // binds a data-confirm submit handler to every form present at load, so
+      // re-wiring revert here would double-fire the confirm modal. It MUST be
+      // true for a swapped-in block, whose forms base.html never saw — those
+      // need wireRevertConfirm or Revert would POST with no confirmation. The
+      // heatmap wiring is idempotent, so it rides the same rebind path for both
+      // initial-load and refreshSnapshots()-swapped rows.
+      function wireSnapshotHandlers(root, includeRevert) {
+        if (!root) return;
+        root.querySelectorAll('.wb-snap-copy').forEach(wireCopy);
+        root.querySelectorAll('.wb-snap-item').forEach(wireSnapshotHeatmap);
+        // Snapshot timestamps render server-side as labeled UTC (the no-JS
+        // fallback); when JS is on, rewrite them to the viewer's local time from
+        // the machine-readable data-ts, matching Compare mode's
+        // `new Date(snap.ts).toLocaleString()` so a US-Pacific user doesn't see
+        // tomorrow's date all evening (ACS-346). Parse the ISO attribute, never
+        // the human text (which carries no zone).
+        root.querySelectorAll('.wb-snap-item .ts[data-ts]').forEach((el) => {
+          const iso = el.getAttribute('data-ts');
+          if (!iso) return;
+          const d = new Date(iso);
+          if (!isNaN(d.getTime())) el.textContent = d.toLocaleString();
+        });
+        if (includeRevert) {
+          root.querySelectorAll('form[data-confirm]').forEach(wireRevertConfirm);
+        }
+      }
+
+      // Refresh ONLY the single-pane snapshots list in place after a completed
+      // generation, instead of the old window.location.reload() (ACS-187). The
+      // reload wiped the live-built logprobs heatmap (#wb-heatmap), which is only
+      // ever populated from streaming frames and has nothing to repopulate it on
+      // a fresh load. Here we fetch the page, lift out just the single pane's
+      // snapshots <details>, and swap it — leaving the heatmap, the textarea, and
+      // scroll position untouched. Fails soft: on any error we leave the UI as-is
+      // (NEVER reload). Both panes are always in the DOM (the mode toggle only
+      // hides them), and compare renders its own .wb-snapshots (#cmp-history), so
+      // every selector is scoped to [data-mode-pane="single"].
+      const singlePane = document.querySelector('[data-mode-pane="single"]');
+      async function refreshSnapshots() {
+        if (!singlePane) return;
+        const resp = await fetch('/workbench/' + chatId, {
+          method: 'GET',
+          credentials: 'same-origin',
+          headers: { 'Accept': 'text/html' },
+        });
+        if (!resp.ok) return;  // fail soft
+        const html = await resp.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const freshPane = doc.querySelector('[data-mode-pane="single"]');
+        if (!freshPane) return;
+        const fresh = freshPane.querySelector('.wb-snapshots');
+        const current = singlePane.querySelector('.wb-snapshots');
+        if (fresh) {
+          const node = document.importNode(fresh, true);
+          if (current) {
+            current.replaceWith(node);
+          } else {
+            // First completion for this session: no snapshots block existed
+            // yet (the server only renders it when there are snapshots). Insert
+            // it right after the meta line, matching server order (the heatmap
+            // companion moved INSIDE the form in ACS-254, so anchoring on it
+            // would nest the snapshots — and their revert <form>s — mid-composer).
+            const anchor = singlePane.querySelector('#wb-last-meta');
+            if (anchor && anchor.parentNode) {
+              anchor.parentNode.insertBefore(node, anchor.nextSibling);
+            } else {
+              singlePane.appendChild(node);
+            }
+          }
+          wireSnapshotHandlers(node, true);
+        } else if (current) {
+          // Server now renders no snapshots (unexpected, but stay consistent).
+          current.remove();
+        }
+      }
+      // Test hook: lets the Playwright suite drive the refresh without a real
+      // upstream stream (there's no Modal locally). Not used by app code.
+      window.__wbRefreshSnapshots = refreshSnapshots;
+
+      wireSnapshotHandlers(singlePane, false);
+    })();
+    </script>
+
+    {# ---- Single / Compare mode toggle -------------------------------------
+       Flips the two panes in place (no navigation), updates the segmented
+       control's pressed state + the shell width class, and syncs ?mode= into
+       the URL so a refresh / bookmark / shared link reopens the same mode.
+       The panes' own JS (single-pane above, compare IIFE in the partial) is
+       untouched — both stay mounted; only visibility changes. #}
+    <script>
+    (function () {
+      const layout = document.getElementById('wb-layout');
+      const btns = Array.from(document.querySelectorAll('.wb-mode-btn'));
+      const panes = {
+        single: document.querySelector('[data-mode-pane="single"]'),
+        compare: document.querySelector('[data-mode-pane="compare"]'),
+      };
+      if (!layout || !panes.single || !panes.compare) return;
+
+      const single = document.getElementById('wb-prompt');
+      const compare = document.getElementById('cmp-prompt');
+      let lastSynced = compare ? compare.value : '';
+
+      function copyPrompt(src, dst) {
+        if (dst.value !== src.value) {
+          dst.value = src.value;
+          // Let the destination pane's own listeners (autosize, previews) react.
+          dst.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        lastSynced = src.value;
+      }
+
+      function singleIsStreaming() {
+        const stop = document.getElementById('wb-stop');
+        return !!stop && stop.style.display !== 'none';
+      }
+
+      function syncPrompt(fromMode) {
+        if (!single || !compare) return;
+        if (fromMode === 'compare') {
+          // Leave lastSynced untouched when skipping: compare is still ahead
+          // of single, and the next non-streaming switch should sync it.
+          if (compare.value !== lastSynced && !singleIsStreaming()) {
+            copyPrompt(compare, single);
+          }
+        } else if (!singleIsStreaming()) {
+          copyPrompt(single, compare);
+        }
+      }
+
+      function setMode(mode, pushUrl) {
+        if (mode !== 'single' && mode !== 'compare') mode = 'single';
+        if (layout.dataset.mode && layout.dataset.mode !== mode) syncPrompt(layout.dataset.mode);
+        layout.dataset.mode = mode;
+        layout.classList.toggle('is-compare-mode', mode === 'compare');
+        panes.single.hidden = (mode !== 'single');
+        panes.compare.hidden = (mode !== 'compare');
+        btns.forEach(function (b) {
+          b.setAttribute('aria-selected', b.dataset.mode === mode ? 'true' : 'false');
+        });
+        if (pushUrl) {
+          const url = new URL(window.location.href);
+          if (mode === 'compare') url.searchParams.set('mode', 'compare');
+          else url.searchParams.delete('mode');
+          window.history.replaceState({}, '', url);
+        }
+      }
+
+      btns.forEach(function (b) {
+        b.addEventListener('click', function () { setMode(b.dataset.mode, true); });
+      });
+
+      // Honour ?mode= on load (server already rendered the right initial pane;
+      // this just keeps client state consistent if the URL is edited directly).
+      const initial = new URLSearchParams(window.location.search).get('mode');
+      if (initial === 'compare' && layout.dataset.mode !== 'compare') setMode('compare', false);
+    })();
+    </script>
+    {% endif %}
+
+    {# ---- wb-inline-rename + sidebar chat menu (ACS-257) -------------------
+       The title renames in place (pencil swaps the h1 text for an input;
+       Enter/blur save, Esc cancels) and every sidebar row gets a hover kebab
+       with Pin / Rename / Delete. Runs outside the {% if chat %} block so the
+       sidebar menu works on any workbench page. #}
+    <script>
+    (function () {
+      const h1 = document.getElementById('wb-title');
+      const list = document.getElementById('wb-chat-list');
+
+      async function renameChat(id, title) {
+        const fd = new FormData();
+        fd.append('title', title);
+        const r = await fetch('/workbench/' + id + '/rename', {
+          method: 'POST', body: fd, credentials: 'same-origin',
+          headers: { 'Accept': 'application/json' },
+        });
+        if (r.status === 401) { window.location.href = '/login'; throw new Error('auth'); }
+        if (!r.ok) throw new Error('rename failed (' + r.status + ')');
+        return (await r.json()).title;
+      }
+
+      // One writer for every place a chat title appears (h1 + sidebar row).
+      function setTitleEverywhere(id, title) {
+        // Skip the h1 while an editor is open inside it — a resolving rename
+        // fetch must not wipe an input the user is typing in (pencil-click
+        // blur-commits the previous edit and can open a new one mid-flight).
+        if (h1 && h1.dataset.chatId === id && !h1.querySelector('input')) h1.textContent = title;
+        const li = list && list.querySelector('li[data-chat-id="' + id + '"]');
+        if (li) {
+          const span = li.querySelector('.wb-chat-title');
+          if (span) span.textContent = title;
+          const a = li.querySelector('a');
+          if (a) a.title = title;
+        }
+      }
+
+      // The error span goes NEXT TO the h1, never inside it — a later
+      // `h1.textContent` read (the pencil's `orig` capture) must see only the
+      // actual title, or a quick retry pre-fills "MyTitleRename failed".
+      function flashError(anchor, msg) {
+        const err = document.createElement('span');
+        err.className = 'wb-title-error';
+        err.textContent = msg;
+        anchor.insertAdjacentElement('afterend', err);
+        setTimeout(() => err.remove(), 4000);
+      }
+
+      // Generic inline editor: swap `mount`'s content for an input; Enter/blur
+      // commit, Esc reverts. `apply(value)` does the optimistic UI + request.
+      function editInline(input, orig, onDone) {
+        let settled = false;
+        const finish = (commit) => {
+          if (settled) return;
+          settled = true;
+          onDone(commit ? input.value.trim() : null);
+        };
+        input.addEventListener('keydown', (e) => {
+          // isComposing: Enter that confirms an IME composition (CJK input)
+          // must not commit the half-composed title.
+          if (e.isComposing || e.keyCode === 229) return;
+          if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+          else if (e.key === 'Escape') finish(false);
+        });
+        input.addEventListener('blur', () => finish(true));
+        input.focus();
+        input.select();
+      }
+
+      // ---- h1 title edit ----
+      const pencil = document.getElementById('wb-rename-toggle');
+      if (pencil && h1) {
+        pencil.addEventListener('click', () => {
+          if (h1.querySelector('input')) return;
+          const orig = h1.textContent;
+          const input = document.createElement('input');
+          input.className = 'wb-title-input';
+          input.setAttribute('aria-label', 'Session title — Enter saves, Escape cancels');
+          input.maxLength = 120;
+          input.value = orig;
+          h1.textContent = '';
+          h1.appendChild(input);
+          editInline(input, orig, (val) => {
+            if (!val || val === orig) { h1.textContent = orig; return; }
+            h1.textContent = val;  // optimistic; server echo corrects below
+            renameChat(h1.dataset.chatId, val)
+              .then((t) => setTitleEverywhere(h1.dataset.chatId, t))
+              .catch(() => {
+                if (!h1.querySelector('input')) h1.textContent = orig;
+                flashError(h1, 'Rename failed');
+              });
+          });
+        });
+      }
+
+      // ---- sidebar kebab menu ----
+      if (!list) return;
+      let open = null;  // {menu, btn}
+
+      function closeMenu(refocus) {
+        if (!open) return;
+        // If focus is inside the menu when it's removed it would silently drop
+        // to <body>; hand it back to the kebab instead.
+        const hadFocus = refocus || open.menu.contains(document.activeElement);
+        open.menu.remove();
+        open.btn.setAttribute('aria-expanded', 'false');
+        if (hadFocus) open.btn.focus();
+        open = null;
+      }
+      document.addEventListener('click', (e) => {
+        if (open && !open.menu.contains(e.target) && !open.btn.contains(e.target)) closeMenu();
+      });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(true); });
+
+      // Mirror the server ordering (pinned_at DESC NULLS LAST, updated_at DESC)
+      // after a pin toggle, so the row moves without a page reload.
+      function sortRows() {
+        const rows = Array.from(list.children);
+        rows.sort((a, b) => {
+          const ap = a.dataset.pinnedAt || '', bp = b.dataset.pinnedAt || '';
+          if (!!ap !== !!bp) return ap ? -1 : 1;
+          if (ap !== bp) return ap < bp ? 1 : -1;
+          const au = a.dataset.updated || '', bu = b.dataset.updated || '';
+          return au < bu ? 1 : au > bu ? -1 : 0;
+        });
+        rows.forEach((r) => list.appendChild(r));
+      }
+
+      async function togglePin(li) {
+        const r = await fetch('/workbench/' + li.dataset.chatId + '/pin', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Accept': 'application/json' },
+        });
+        if (r.status === 401) { window.location.href = '/login'; return; }
+        if (!r.ok) { flashError(li.querySelector('a'), 'Pin failed'); return; }
+        const data = await r.json();
+        // Server timestamp, so the in-place sort matches the next full render
+        // even with client clock skew.
+        li.dataset.pinnedAt = data.pinned_at || '';
+        // Class, not the hidden attribute — hidden is a no-op on inline <svg>.
+        li.classList.toggle('pinned', data.pinned);
+        sortRows();
+      }
+
+      function beginRowRename(li) {
+        const a = li.querySelector('a');
+        const span = li.querySelector('.wb-chat-title');
+        if (!a || !span || li.querySelector('.wb-chat-rename-input')) return;
+        const orig = span.textContent;
+        const input = document.createElement('input');
+        input.className = 'wb-chat-rename-input';
+        input.setAttribute('aria-label', 'Chat title — Enter saves, Escape cancels');
+        input.maxLength = 120;
+        input.value = orig;
+        a.style.display = 'none';
+        li.insertBefore(input, a);
+        editInline(input, orig, (val) => {
+          input.remove();
+          a.style.display = '';
+          if (!val || val === orig) return;
+          setTitleEverywhere(li.dataset.chatId, val);  // optimistic
+          renameChat(li.dataset.chatId, val)
+            .then((t) => setTitleEverywhere(li.dataset.chatId, t))
+            .catch(() => setTitleEverywhere(li.dataset.chatId, orig));
+        });
+      }
+
+      function deleteChat(li) {
+        const go = async () => {
+          const r = await fetch('/workbench/' + li.dataset.chatId + '/delete', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+          });
+          if (r.status === 401) { window.location.href = '/login'; return; }
+          if (!r.ok) { flashError(li.querySelector('a'), 'Delete failed'); return; }
+          if (li.classList.contains('active')) { window.location.href = '/workbench'; return; }
+          li.remove();
+        };
+        if (window.acsConfirm) {
+          window.acsConfirm({
+            message: 'Delete this session? This cannot be undone.',
+            danger: true, confirmLabel: 'Delete', onConfirm: go,
+          });
+        } else if (confirm('Delete this session? This cannot be undone.')) {
+          go();
+        }
+      }
+
+      const ICONS = {
+        pin: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 3a1 1 0 0 1 .97 1.24l-.9 3.62 3.29 3.29a1 1 0 0 1-.21 1.58l-4.68 2.6-3.02 5.43a1 1 0 0 1-1.58.21l-2.83-2.83-4.24 4.24a1 1 0 0 1-1.41-1.41l4.24-4.24-2.83-2.83a1 1 0 0 1 .21-1.58l5.43-3.02 2.6-4.68A1 1 0 0 1 12.62 4z" transform="scale(0.8) translate(3 3)"/></svg>',
+        pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+        trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>',
+      };
+
+      function openRowMenu(btn, li) {
+        closeMenu();
+        const menu = document.createElement('div');
+        menu.className = 'wb-chat-menu';
+        [
+          { label: li.dataset.pinnedAt ? 'Unpin' : 'Pin', icon: ICONS.pin, act: () => togglePin(li) },
+          { label: 'Rename', icon: ICONS.pencil, act: () => beginRowRename(li) },
+          { label: 'Delete', icon: ICONS.trash, danger: true, act: () => deleteChat(li) },
+        ].forEach((it) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          if (it.danger) b.className = 'danger';
+          b.innerHTML = it.icon;
+          b.appendChild(document.createTextNode(it.label));
+          b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeMenu();
+            it.act();
+          });
+          menu.appendChild(b);
+        });
+        li.appendChild(menu);
+        btn.setAttribute('aria-expanded', 'true');
+        open = { menu, btn };
+      }
+
+      list.addEventListener('click', (e) => {
+        const btn = e.target.closest('.wb-chat-kebab');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const li = btn.closest('li');
+        if (open && open.btn === btn) { closeMenu(); return; }
+        openRowMenu(btn, li);
+      });
+    })();
+    </script>
+  </section>
+</div>
+{% endblock %}

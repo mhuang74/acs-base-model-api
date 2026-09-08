@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% block title %}Models — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  tr[data-row-state="stopped"] .runtime-only,
+  tr[data-row-state="unconfigured"] .runtime-only,
+  tr[data-row-state="unavailable"] .runtime-only,
+  tr[data-row-state="unknown"] .runtime-only { display: none; }
+  tr[data-row-state="deployed"] .deploy-only,
+  tr[data-row-state="initializing"] .deploy-only { display: none; }
+  .pending-actions { display: flex; gap: 0.4rem; }
+  .pending-actions form { margin: 0; }
+  .warm-window-row td { background: var(--bg-soft, transparent); border-top: none; padding-top: 0.4rem; }
+  .warm-window-summary { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .warm-window-summary code { font-size: 0.85rem; }
+  .warm-window-form { display: none; margin-top: 0.6rem; padding: 0.6rem 0.75rem; border: 1px solid var(--border, #444); border-radius: 6px; }
+  .warm-window-form.open { display: block; }
+  .warm-window-form label { display: block; margin-bottom: 0.4rem; font-size: 0.85rem; }
+  .warm-window-form label input[type="text"] { font-family: monospace; min-width: 14rem; margin-left: 0.5rem; }
+  .warm-window-form .actions { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+  .warm-window-form .actions form { margin: 0; }
+  .warm-window-pill-disabled { background: var(--warn-bg); color: var(--accent-2); border-color: var(--warn-border); }
+  .reject-btn { background: var(--error); border-color: var(--error); }
+  .reject-btn:hover { background: #91201a; border-color: #91201a; }
+  .state-cell .runtime-note { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+  .scaling-cell { font-size: 0.85rem; line-height: 1.4; }
+  .scaling-cell code { font-size: 0.85rem; }
+  .models-legend { margin-top: 1.25rem; padding: 0.75rem 1rem; border: 1px solid var(--border, #444); border-radius: 6px; background: var(--bg-soft, transparent); }
+  .models-legend h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+  .models-legend .legend-body { font-size: 0.85rem; line-height: 1.55; color: var(--muted); }
+  .models-legend .legend-body b { color: var(--text); }
+
+  @media (max-width: 760px) {
+    .warm-window-form label input[type="text"] { min-width: 0; width: 100%; margin-left: 0; margin-top: 0.25rem; }
+    .warm-window-summary { gap: 0.4rem; }
+    .warm-window-summary code { word-break: break-all; }
+    .pending-actions { flex-wrap: wrap; }
+    section input[name="cron_expression"] { min-width: 0 !important; width: 100% !important; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Models</h1>
+<p class="lead" style="margin-bottom: 2rem;">Manage model lifecycle: stop, keep-warm, release, deploy, and configure warm windows.</p>
+
+{% if flash_message %}
+  <p class="pill" style="background: var(--success-bg); color: var(--success); border-color: var(--success-border); display:inline-block;">{{ flash_message }}</p>
+{% endif %}
+{% if flash_error %}
+  <p class="pill" style="background: var(--error-bg); color: var(--error); border-color: var(--error-border); display:inline-block;">{{ flash_error }}</p>
+{% endif %}
+
+<section>
+  {% set active_models = models | selectattr("state", "in", ["deployed", "initializing"]) | list %}
+  {% set stopped_models = models | selectattr("state", "equalto", "stopped") | list %}
+  <h2>Active models <span class="muted">(<span id="active-models-count">{{ active_models|length }}</span> running)</span></h2>
+  {% if modal_unavailable %}
+    <p class="pill status-pending">{{ modal_unavailable }}</p>
+  {% endif %}
+  {% if models %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>Modal app</th>
+          <th>GPU shape</th>
+          <th>app state · live</th>
+          <th>scaling (deploy-time)</th>
+          <th style="width: 320px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="models-active-tbody">
+        {% for row in models if row.state in ["deployed", "initializing"] %}
+        <tr data-model-id="{{ row.id }}" data-row-state="{{ row.state }}">
+          <td><code>{{ row.id }}</code></td>
+          <td>{% if row.modal_app_name %}<code class="muted">{{ row.modal_app_name }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{{ row.gpu_shape_label or "—" }}</td>
+          <td class="state-cell">
+            {% if row.state == "deployed" %}
+              <span class="pill status-approved">deployed</span>
+            {% elif row.state == "initializing" %}
+              <span class="pill status-pending">initializing</span>
+            {% else %}
+              <span class="pill">{{ row.state }}</span>
+            {% endif %}
+            <span class="runtime-note">
+              {% if row.live_containers is none %}
+                <span class="live-count" data-live-count="">—</span> <span class="muted">live (count unavailable)</span>
+              {% else %}
+                <span class="live-count" data-live-count="{{ row.live_containers }}">{{ row.live_containers }}</span> live
+                {% if row.live_containers == 0 %}<span class="muted">(scaled to zero)</span>{% endif %}
+              {% endif %}
+            </span>
+          </td>
+          <td class="scaling-cell">
+            {% if row.min_containers is not none %}
+              min <code>{{ row.min_containers }}</code> · max <code>{{ row.max_containers }}</code>
+              <br><span class="muted">scaledown</span> <code>{{ row.scaledown_window_s }}s</code>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.modal_app_name and not modal_unavailable %}
+            <div class="pending-actions">
+              <form action="/admin/models/{{ row.id }}/stop" method="post" class="runtime-only"
+                    data-confirm="Stop {{ row.id }}? Running containers terminate immediately."
+                    data-confirm-label="Stop">
+                <button type="submit" class="reject-btn">Stop</button>
+              </form>
+              <form action="/admin/models/{{ row.id }}/keep-warm" method="post" class="runtime-only">
+                <button type="submit">Keep warm</button>
+              </form>
+              <form action="/admin/models/{{ row.id }}/release" method="post" class="runtime-only">
+                <button type="submit">Release</button>
+              </form>
+              <form action="/admin/models/{{ row.id }}/deploy" method="post" class="deploy-only"
+                    data-confirm="Deploy {{ row.id }}? Uses modal_app.py from this container image."
+                    data-confirm-danger="false" data-confirm-label="Deploy">
+                <button type="submit">Deploy</button>
+              </form>
+            </div>
+            <div class="warm-window-summary" style="margin-top: 0.6rem;">
+              <strong style="font-size:0.9rem;">Warm window:</strong>
+              {% if row.warm_window %}
+                <code>{{ row.warm_window.warm_cron }}</code>
+                <span class="muted">→</span>
+                <code>{{ row.warm_window.cool_cron }}</code>
+                <code class="muted">{{ row.warm_window.timezone }}</code>
+                {% if row.warm_window.enabled %}
+                  <span class="pill status-approved">enabled</span>
+                {% else %}
+                  <span class="pill warm-window-pill-disabled">disabled</span>
+                {% endif %}
+              {% else %}
+                <span class="muted">not configured</span>
+              {% endif %}
+              <button type="button" onclick="document.getElementById('warm-window-form-{{ row.id }}').classList.toggle('open');">
+                {% if row.warm_window %}Edit{% else %}Configure{% endif %}
+              </button>
+            </div>
+            <div id="warm-window-form-{{ row.id }}" class="warm-window-form">
+              <form action="/admin/models/{{ row.id }}/warm-window" method="post">
+                <label>warm_cron <input type="text" name="warm_cron" value="{{ row.warm_window.warm_cron if row.warm_window else '15 8 * * 3-6,0' }}" required /></label>
+                <label>cool_cron <input type="text" name="cool_cron" value="{{ row.warm_window.cool_cron if row.warm_window else '0 17 * * 3-6,0' }}" required /></label>
+                <label>timezone <input type="text" name="timezone" value="{{ row.warm_window.timezone if row.warm_window else 'UTC' }}" required /></label>
+                <label><input type="checkbox" name="enabled" value="true" {% if (not row.warm_window) or row.warm_window.enabled %}checked{% endif %} /> enabled</label>
+                <div class="actions">
+                  <button type="submit">Save warm window</button>
+                </div>
+              </form>
+              {% if row.warm_window %}
+              <form action="/admin/models/{{ row.id }}/warm-window/delete" method="post" style="margin-top:0.4rem;"
+                    data-confirm="Remove warm window for {{ row.id }}? Both scheduled jobs will be unregistered."
+                    data-confirm-label="Remove">
+                <button type="submit" class="reject-btn">Remove warm window</button>
+              </form>
+              {% endif %}
+            </div>
+            {% else %}
+              <span class="muted">disabled</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not active_models %}
+  <p class="muted" id="active-models-empty">No models currently running.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No models registered.</p>
+  {% endif %}
+
+  <div class="models-legend">
+    <h3>Column &amp; action reference</h3>
+    <div class="legend-body">
+      <b>app state · live</b> — Modal app state (<code>deployed</code> means the app exists; <code>initializing</code> means it's coming up) plus the live container count from Modal. A deployed app with <code>0 live</code> is scaled to zero (no cost, cold-boot on next request).
+      <br><b>scaling (deploy-time)</b> — <code>min_containers</code> / <code>max_containers</code> / <code>scaledown_window</code> from the model registry, baked into the Modal app at deploy time. Runtime overrides via Keep warm / Release / warm window are not echoed here — the live count and the warm-window summary on each row reflect the actual runtime state.
+      <br><b>Stop</b> — tears down all containers (<code>modal app stop</code>); costs $0/hr while stopped. Re-deploy to use again.
+      <br><b>Keep warm</b> — sets <code>min_containers=1</code> at runtime. One container stays hot indefinitely; eliminates cold-boot latency. Cost runs continuously (~$36/hr for 8×H200, ~$5/hr for 1×H100).
+      <br><b>Release</b> — sets <code>min_containers=0</code>. Container becomes eligible to scale down after <code>scaledown_window</code> idle.
+      <br><b>Deploy</b> — runs <code>MODEL_ID=&lt;id&gt; modal deploy modal_app.py</code> from inside this container. Idempotent (~1.6 s if already deployed). Also pings the model to start cold-boot warming.
+      <br><b>Warm window</b> — APScheduler crons that flip <code>min_containers</code> on a recurring schedule. <code>warm_cron</code> fires <code>set_min_containers=1</code>; <code>cool_cron</code> fires <code>set_min_containers=0</code>. Standard 5-field cron in the supplied timezone. Lives in the wrapper DB; edits take effect on save without a Modal redeploy.
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Stopped models <span class="muted">(<span id="stopped-models-count">{{ stopped_models|length }}</span>)</span></h2>
+  {% if models %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>GPU shape</th>
+          <th>state</th>
+          <th style="width: 160px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="models-stopped-tbody">
+        {% for row in models if row.state == "stopped" %}
+        <tr data-model-id="{{ row.id }}" data-row-state="{{ row.state }}">
+          <td><code>{{ row.id }}</code></td>
+          <td>{{ row.gpu_shape_label or "—" }}</td>
+          <td class="state-cell">
+            <span class="pill status-pending">stopped</span>
+          </td>
+          <td>
+            {% if row.modal_app_name and not modal_unavailable %}
+            <div class="pending-actions">
+              <form action="/admin/models/{{ row.id }}/deploy" method="post" class="deploy-only"
+                    data-confirm="Deploy {{ row.id }}? Uses modal_app.py from this container image."
+                    data-confirm-danger="false" data-confirm-label="Deploy">
+                <button type="submit">Deploy</button>
+              </form>
+            </div>
+            {% if row.warm_window %}
+            <small class="muted" style="display:block; margin-top:0.4rem;">
+              Warm window: <code>{{ row.warm_window.warm_cron }}</code> → <code>{{ row.warm_window.cool_cron }}</code>
+              <code>{{ row.warm_window.timezone }}</code>
+              {% if row.warm_window.enabled %}· enabled{% else %}· disabled{% endif %}
+            </small>
+            {% endif %}
+            {% else %}
+              <span class="muted">disabled</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not stopped_models %}
+  <p class="muted" id="stopped-models-empty">No stopped models.</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% set other_models = models | rejectattr("state", "in", ["deployed", "initializing", "stopped"]) | list %}
+{% if other_models %}
+<section>
+  <h2>Other models <span class="muted">({{ other_models|length }})</span></h2>
+  <p class="muted">Registered but not actionable — typically missing <code>modal_app_name</code>, or Modal tokens are unset, or a state lookup just failed.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>Modal app</th>
+          <th>GPU shape</th>
+          <th>state</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in other_models %}
+        <tr>
+          <td><code>{{ row.id }}</code></td>
+          <td>{% if row.modal_app_name %}<code class="muted">{{ row.modal_app_name }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{{ row.gpu_shape_label or "—" }}</td>
+          <td>
+            {% if row.state == "unconfigured" %}
+              <span class="pill muted">no modal_app_name</span>
+            {% elif row.state == "unavailable" %}
+              <span class="pill status-rejected">unavailable</span>
+            {% else %}
+              <span class="pill">{{ row.state }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if models and not modal_unavailable %}
+<script>
+(function () {
+  var ACTIVE_STATES = ["deployed", "initializing"];
+  var POLL_MS = 10000;
+
+  function pillFor(state) {
+    if (state === "deployed") return '<span class="pill status-approved">deployed</span>';
+    if (state === "initializing") return '<span class="pill status-pending">initializing</span>';
+    if (state === "stopped") return '<span class="pill status-pending">stopped</span>';
+    if (state === "unconfigured") return '<span class="pill muted">no modal_app_name</span>';
+    if (state === "unavailable") return '<span class="pill status-rejected">unavailable</span>';
+    return '<span class="pill">' + state + '</span>';
+  }
+
+  function liveCountHtml(count) {
+    // count == null means "unknown" (failed/timed-out fetch) — render it as
+    // such, never as "(scaled to zero)", which would misreport a warm model
+    // as cold (ACS-128).
+    if (count == null) {
+      return '<span class="runtime-note"><span class="live-count" data-live-count="">—</span> <span class="muted">live (count unavailable)</span></span>';
+    }
+    var scaledNote = (count === 0) ? ' <span class="muted">(scaled to zero)</span>' : '';
+    return '<span class="runtime-note"><span class="live-count" data-live-count="' + count + '">' + count + '</span> live' + scaledNote + '</span>';
+  }
+
+  function rowSection(state) {
+    if (ACTIVE_STATES.indexOf(state) !== -1) return "active";
+    if (state === "stopped") return "stopped";
+    return "other";
+  }
+
+  function applyState(row, newState, liveCount) {
+    if (!row || !newState) return false;
+    var oldState = row.dataset.rowState;
+    var cell = row.querySelector(".state-cell");
+    if (cell && ACTIVE_STATES.indexOf(newState) !== -1) {
+      cell.innerHTML = pillFor(newState) + liveCountHtml(liveCount);
+    } else if (cell) {
+      cell.innerHTML = pillFor(newState);
+    }
+    if (oldState === newState) return false;
+    row.dataset.rowState = newState;
+    return rowSection(oldState) !== rowSection(newState);
+  }
+
+  async function poll() {
+    try {
+      var resp = await fetch("/admin/models/status", { credentials: "same-origin" });
+      if (!resp.ok) return;
+      var data = await resp.json();
+      var models = (data && data.models) || [];
+      var needsReload = false;
+      for (var i = 0; i < models.length; i++) {
+        var m = models[i];
+        var row = document.querySelector('tr[data-model-id="' + m.id + '"]');
+        if (row && applyState(row, m.state, m.live_containers)) needsReload = true;
+      }
+      if (needsReload) window.location.reload();
+    } catch (_) {
+      // Silent — next tick retries.
+    }
+  }
+
+  setInterval(poll, POLL_MS);
+})();
+</script>
+{% endif %}
+{% endblock %}

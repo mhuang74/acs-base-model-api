@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<body style="font-family: -apple-system, system-ui, sans-serif; color: #0a0a0a; max-width: 600px; margin: 24px auto; line-height: 1.55;">
+  <p>Dear {{ recipient_name }},</p>
+
+  {% if survey_respondent %}
+  <p>
+    You recently filled in our Base Models survey and said you were interested
+    in becoming a beta tester. Thank you.
+  </p>
+  {% else %}
+  <p>
+    We are opening a small beta for ACS Infra: an API and workbench for using
+    base language models (Llama 3.1 405B, Trinity, and more) in research
+    workflows, free for researchers. I thought this might be relevant to your work.
+  </p>
+  {% endif %}
+
+  <p>Here is your invitation link:</p>
+  <p style="margin: 24px 0;">
+    <a href="{{ invite_url }}" style="display: inline-block; background: #1d7a93; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+      Accept invitation
+    </a>
+  </p>
+  <p>
+    Or copy this link into your browser:<br>
+    <a href="{{ invite_url }}">{{ invite_url }}</a>
+  </p>
+
+  <p>
+    The link is single-use and expires on <strong>{{ expires_at }}</strong>. It
+    will create your account and your first API key. Once you are in, the
+    easiest way to start is the <a href="{{ workbench_url }}">Workbench</a>:
+    type a prompt and click Continue to generate a completion.
+  </p>
+
+  <p>
+    One thing to know up front: these are <strong>base models</strong> — they
+    continue your text rather than answer like a chatbot. The
+    <a href="{{ tutorial_url }}">tutorial</a> shows how to get the most out of them.
+  </p>
+
+  <p>
+    Please also join the beta Discord:<br>
+    <a href="{{ discord_url }}">{{ discord_url }}</a>
+  </p>
+  <p>
+    Start by reading <code>#welcome</code>. We will use Discord for feedback,
+    bug reports, status updates, and beta communication.
+  </p>
+
+  {% if not survey_respondent and survey_url %}
+  <p>
+    Optional: if you have 10-15 minutes, this survey helps us understand which
+    base-model use cases matter most:<br>
+    <a href="{{ survey_url }}">{{ survey_url }}</a>
+  </p>
+  {% endif %}
+
+  <p>What we ask:</p>
+  <ul>
+    <li>Try any workload that is useful to you, large or small.</li>
+    <li>Tell us what breaks, what is confusing, and what would make the service more useful for your work.</li>
+  </ul>
+
+  <p>Looking forward to seeing what you do with it.</p>
+  <p>
+    The ACS Research team
+  </p>
+</body>
+</html>

@@ -1,0 +1,14 @@
+You've been invited to ACS Infra.
+
+Click the link below to set up your account. The link is single-use and
+expires on {{ expires_at }}.
+
+{{ invite_url }}
+
+Once you complete signup you'll be taken directly to your dashboard, where
+your initial API key will be shown once — save it immediately.
+
+— ACS Research
+infra@acsresearch.org
+
+If you weren't expecting this invitation, you can ignore this email.

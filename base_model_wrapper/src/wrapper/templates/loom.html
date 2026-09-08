@@ -1,0 +1,1668 @@
+{% extends "base.html" %}
+{% block title %}Loom — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  /* The loom wants the full width — a tree rail + a node panel. */
+  main { max-width: 1240px; }
+  .loom-form, .loom-controls { max-width: none; }
+
+  /* ---- Faint branching-tree backdrop (the "loom" animation, echoing the
+     landing-page experiment). Sits behind all chrome as a full-viewport
+     canvas; the page chrome is lifted above it. One shot per page load —
+     no toggle, no loop. ---- */
+  #loom-bg-anim {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    /* Negative z-index so the canvas paints *behind* the static page content.
+       The canvas is rendered inside <main> (base.html's content block), which
+       is a stacking context (z-index:1 below). A positioned child at z-index:0
+       would otherwise paint on top of the non-positioned panels/inputs — the
+       bug this fixes; -1 drops it below them while staying above the body bg. */
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.65;
+    /* Concentrate it in the open centre of the page and let it fall off toward
+       the right-hand controls / header, so it stays a backdrop rather than
+       sitting over the working chrome. The comet-trail fade (below) keeps it
+       sparse. */
+    -webkit-mask-image: radial-gradient(120% 120% at 60% 34%, #000 0%, #000 50%, rgba(0,0,0,0.5) 80%, transparent 100%);
+    mask-image: radial-gradient(120% 120% at 60% 34%, #000 0%, #000 50%, rgba(0,0,0,0.5) 80%, transparent 100%);
+    transition: opacity 200ms ease;
+  }
+  /* Establish stacking contexts for the real chrome so it stays above the
+     backdrop canvas (which is z-index:-1 within <main>'s context). */
+  body header.site-header { position: relative; z-index: 3; }
+  body main { position: relative; z-index: 1; }
+  body footer.site-footer { position: relative; z-index: 1; }
+
+  /* Heading on its own line; description as a block underneath (not squeezed
+     onto the same row). Matches the workbench's title-then-copy stacking. */
+  .loom-head h1 { margin: 0 0 0.35rem; }
+  .loom-head .loom-sub { color: var(--muted); font-size: 0.9rem; display: block; margin: 0 0 0.25rem; }
+  .loom-head .loom-note { color: var(--muted); font-size: 0.8rem; display: block; }
+
+  .loom-layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 1.5rem;
+    margin-top: 1.25rem;
+  }
+  @media (max-width: 860px) { .loom-layout { grid-template-columns: 1fr; } }
+
+  .loom-tree {
+    border-right: 1px solid var(--border);
+    padding-right: 1rem;
+    max-height: 70vh;
+    overflow: auto;
+  }
+  @media (max-width: 860px) {
+    .loom-tree { border-right: 0; border-bottom: 1px solid var(--border); padding-right: 0; padding-bottom: 1rem; }
+  }
+  .loom-tree-heading {
+    font-family: var(--font-sans);
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 0 0 0.5rem;
+  }
+  /* Tree nodes: nested <ul> with a guide line; depth via left padding. */
+  .loom-tree ul { list-style: none; margin: 0; padding-left: 0.9rem; border-left: 1px solid var(--border); }
+  .loom-tree > ul { padding-left: 0; border-left: 0; }
+  .loom-node-row {
+    display: flex; align-items: center; gap: 0.35rem;
+    padding: 0.25rem 0.4rem; border-radius: var(--radius);
+    cursor: pointer; font-size: 0.85rem; line-height: 1.3;
+  }
+  .loom-node-row:hover { background: var(--surface-alt); }
+  .loom-node-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+  .loom-node-row.streaming { font-style: italic; opacity: 0.85; }
+  .loom-node-snippet {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+    font-family: var(--font-mono); font-size: 0.8rem;
+  }
+  .loom-node-root .loom-node-snippet { font-style: italic; }
+  .loom-node-del {
+    border: 0; background: none; color: var(--muted); cursor: pointer;
+    font-size: 0.85rem; padding: 0 0.2rem; line-height: 1; opacity: 0.6;
+  }
+  .loom-node-del:hover { color: var(--danger, #c0392b); opacity: 1; }
+
+  .loom-panel { min-width: 0; }
+  .loom-panel-heading {
+    font-family: var(--font-sans);
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 0 0 0.5rem;
+  }
+  /* Seed-root block. When the tree is empty it's the primary action (shown at
+     the top, expanded); once a root exists it collapses out of the way. */
+  .loom-seed {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 0.9rem 1rem; margin-bottom: 1.25rem; background: var(--surface-alt);
+  }
+  .loom-seed.is-collapsed { padding: 0; background: none; border: 0; }
+  .loom-seed-heading {
+    font-family: var(--font-sans);
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 0.5rem;
+  }
+  .loom-seed summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; }
+  .loom-context {
+    background: var(--surface-alt); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 0.9rem 1rem;
+    font-family: var(--font-mono); font-size: 0.86rem; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 42vh; overflow: auto;
+  }
+  .loom-context .loom-prefix { color: var(--fg-soft); }
+  /* Branch blocks in the context panel. Live (still streaming) and saved
+     (persisted children of the selected node) share one look, so finishing a
+     generation doesn't visually yank the branches away (ACS-254) — the blocks
+     stay put and become clickable. */
+  .loom-branch { margin-top: 0.5rem; border-top: 1px dashed var(--border); padding-top: 0.4rem; }
+  .loom-branch-tag { color: var(--muted); font-size: 0.72rem; font-family: var(--font-sans); }
+  /* The open affordance lives on the TAG, not the block: with the heatmap on,
+     the branch body is tiled with token spans whose click handler (popover)
+     stops propagation, so a block-level click target would only work in the
+     gaps. The tag is always plain text, so it always works. */
+  .loom-branch-tag.loom-branch-open { cursor: pointer; }
+  .loom-branch-tag.loom-branch-open:hover { color: var(--accent); text-decoration: underline; }
+  /* Per-token heatmap spans (.acs-tok) + top-k popover live in the shared
+     _logprobs_heatmap.html partial, included in the content block below. */
+
+  /* Horizontal control bar, styled after workbench's .wb-controls: label above,
+     control below, uniform 2.25rem-tall inputs, a flex spacer that pushes the
+     action buttons to the right. Wraps gracefully on narrow viewports. */
+  .loom-controls {
+    /* This IS the <form>, so it inherits base.css's `form { flex-direction:
+       column }` — override to row or the controls stack vertically in a narrow
+       right column (the pre-fix bug). */
+    display: flex; flex-direction: row; flex-wrap: wrap;
+    align-items: flex-end; gap: 0.85rem;
+    margin: 1rem 0 0.5rem;
+  }
+  .loom-controls label {
+    display: flex; flex-direction: column; gap: 0.3rem;
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .loom-controls input, .loom-controls select {
+    font-family: var(--font-mono);
+    height: 2.25rem; padding: 0 0.7rem;
+    color: var(--fg); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    transition: border-color 120ms, box-shadow 120ms, background 120ms;
+  }
+  .loom-controls input:hover, .loom-controls select:hover { border-color: var(--border-strong); }
+  .loom-controls input:focus, .loom-controls select:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .loom-num { width: 5.5rem; }
+  /* Heatmap on/off toggle — a compact inline switch that reads as a control,
+     not a data field (no uppercase label-stack, checkbox sits inline). */
+  .loom-toggle {
+    flex-direction: row !important; align-items: center; gap: 0.4rem;
+    font-size: 0.8rem; font-weight: 500; letter-spacing: 0;
+    text-transform: none; color: var(--fg-soft); cursor: pointer;
+    height: 2.25rem;
+  }
+  .loom-toggle input { height: auto; padding: 0; accent-color: var(--accent); cursor: pointer; }
+  .loom-controls .spacer { flex: 1; min-width: 0; }
+  .loom-legend { font-size: 0.74rem; color: var(--muted); display: flex; align-items: center; gap: 0.4rem; }
+  .loom-legend[hidden] { display: none; }
+  .loom-legend .swatch { display: inline-block; width: 46px; height: 10px; border-radius: 2px;
+    background: linear-gradient(90deg, #c0392b, #e6b800, #2e9e5b); }
+  .loom-empty { color: var(--muted); font-style: italic; padding: 1rem 0; }
+
+  /* ---- Tier-2 editing surface (ACS-166) ----------------------------------
+     Node-panel action row (edit / split / new-sibling), the inline edit box,
+     export/import buttons, and the "?" hotkey legend overlay. ---- */
+  .loom-node-actions {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    margin: 0.5rem 0 0.25rem;
+  }
+  .loom-node-actions button {
+    font-family: var(--font-sans); font-size: 0.78rem;
+    padding: 0.3rem 0.6rem; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); color: var(--fg-soft);
+    cursor: pointer;
+  }
+  .loom-node-actions button:hover { border-color: var(--border-strong); color: var(--fg); }
+  .loom-node-actions .spacer { flex: 1; min-width: 0; }
+  .loom-node-actions kbd {
+    font-family: var(--font-mono); font-size: 0.68rem;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 0.2rem; margin-left: 0.25rem; background: var(--surface-alt);
+  }
+  /* Inline edit box replaces the read-only context while editing a node. */
+  .loom-edit-wrap { display: none; margin-top: 0.5rem; }
+  .loom-edit-wrap.show { display: block; }
+  .loom-edit-wrap textarea {
+    width: 100%; min-height: 8rem; font-family: var(--font-mono);
+    font-size: 0.86rem; line-height: 1.55;
+    color: var(--fg); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 0.7rem 0.8rem; resize: vertical;
+  }
+  .loom-edit-wrap textarea:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .loom-edit-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; align-items: center; }
+  .loom-edit-actions .loom-edit-hint { color: var(--muted); font-size: 0.74rem; margin-left: auto; }
+
+  /* Export / import sit on the view bar, right-aligned. */
+  .loom-io { display: flex; align-items: center; gap: 0.4rem; margin-left: auto; }
+  .loom-io button {
+    font-family: var(--font-sans); font-size: 0.78rem;
+    padding: 0.35rem 0.6rem; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); color: var(--fg-soft);
+    cursor: pointer;
+  }
+  .loom-io button:hover { border-color: var(--border-strong); color: var(--fg); }
+  .loom-help-btn {
+    width: 2rem; height: 2rem; padding: 0; font-weight: 700; font-size: 0.95rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+  }
+
+  /* Hotkey legend — a centred modal overlay toggled by "?" or the help button. */
+  .loom-help-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.45); padding: 1rem;
+  }
+  .loom-help-overlay.show { display: flex; }
+  .loom-help-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    max-width: 420px; width: 100%; padding: 1.25rem 1.4rem;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    /* Taller-than-viewport cards scroll internally instead of flex-centre
+       clipping their top off-screen (ACS-258). */
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
+  .loom-help-card h2 {
+    font-size: 0.95rem; margin: 0 0 0.75rem;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .loom-help-card .loom-help-close {
+    border: 0; background: none; color: var(--muted); cursor: pointer;
+    font-size: 1.3rem; line-height: 1; padding: 0 0.2rem;
+  }
+  .loom-help-card .loom-help-close:hover { color: var(--fg); }
+  .loom-help-card dl { display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 0.9rem; margin: 0; }
+  .loom-help-card dt { text-align: right; }
+  .loom-help-card dd { margin: 0; color: var(--fg-soft); font-size: 0.85rem; }
+  .loom-help-card kbd {
+    font-family: var(--font-mono); font-size: 0.76rem;
+    border: 1px solid var(--border); border-radius: 3px; padding: 0.05rem 0.35rem;
+    background: var(--surface-alt); color: var(--fg); white-space: nowrap;
+  }
+  .loom-help-card .loom-help-subhead {
+    font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted); margin: 1rem 0 0.6rem;
+  }
+  .loom-help-card .loom-sym { font-family: var(--font-mono); font-size: 0.85rem; white-space: nowrap; }
+  /* Title row: name on the left, rename/delete actions on the right — mirrors
+     the workbench section head so the two surfaces feel like siblings. */
+  .loom-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  .loom-actions { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+  .loom-icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 2.1rem; height: 2.1rem; padding: 0; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); color: var(--fg-soft);
+    cursor: pointer;
+  }
+  .loom-icon-btn:hover { border-color: var(--border-strong); color: var(--fg); }
+  .loom-icon-btn.danger:hover { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+  .loom-icon-btn svg { width: 15px; height: 15px; }
+  /* Inline title rename (ACS-257): lives inside the h1, so font: inherit
+     picks up the heading styling. */
+  .loom-title-input {
+    font: inherit; color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--accent); border-radius: var(--radius);
+    padding: 0 0.35rem; margin: 0;
+    width: 100%; max-width: 24rem;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .loom-title-input:focus { outline: none; }
+  #loom-error { color: var(--danger, #c0392b); }
+  #loom-streaming { color: var(--accent); font-size: 0.82rem; display: none; }
+  #loom-streaming.show { display: inline; }
+
+  /* ---- List / Graph view toggle ------------------------------------------
+     A segmented control sitting above the layout. In "graph" mode the sidebar
+     tree rail is hidden and a full-width pan/zoom SVG canvas ("multiverse")
+     is shown instead; the node/context panel + branch controls stay put so
+     selecting a node in the graph works exactly like the sidebar. ---- */
+  .loom-viewbar {
+    display: flex; align-items: center; gap: 0.6rem;
+    margin-top: 1.1rem;
+  }
+  .loom-viewbar .loom-viewbar-hint { color: var(--muted); font-size: 0.78rem; }
+  .loom-viewseg {
+    display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; background: var(--surface);
+  }
+  .loom-viewseg button {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    border: 0; background: none; color: var(--fg-soft); cursor: pointer;
+    font-family: var(--font-sans); font-size: 0.8rem; font-weight: 500;
+    padding: 0.4rem 0.75rem; line-height: 1;
+    border-radius: 0;
+  }
+  .loom-viewseg button + button { border-left: 1px solid var(--border); }
+  .loom-viewseg button:hover { background: var(--surface-alt); color: var(--fg); }
+  .loom-viewseg button.active { background: var(--accent-soft); color: var(--accent); }
+  .loom-viewseg button svg { width: 14px; height: 14px; }
+
+  /* Graph-mode layout tweaks: the sidebar tree collapses and the panel spans
+     the full width, with the SVG canvas above it. */
+  .loom-layout.is-graph { grid-template-columns: 1fr; }
+  .loom-layout.is-graph .loom-tree { display: none; }
+
+  .loom-graph-wrap {
+    position: relative;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface);
+    height: 58vh; min-height: 320px; overflow: hidden;
+    margin-bottom: 1.25rem;
+  }
+  #loom-graph-svg { display: block; width: 100%; height: 100%; cursor: grab; }
+  #loom-graph-svg.dragging { cursor: grabbing; }
+  #loom-graph-svg .loom-edge {
+    fill: none; stroke: var(--border-strong, var(--border)); stroke-width: 1.5;
+    opacity: 0.7;
+  }
+  #loom-graph-svg .loom-edge.on-path { stroke: var(--accent); stroke-width: 2.2; opacity: 1; }
+  #loom-graph-svg .loom-gnode-box {
+    fill: var(--surface-alt); stroke: var(--border); stroke-width: 1.2;
+    rx: 8; ry: 8;
+  }
+  #loom-graph-svg .loom-gnode:hover .loom-gnode-box { stroke: var(--border-strong, var(--accent)); }
+  #loom-graph-svg .loom-gnode.on-path .loom-gnode-box { stroke: var(--accent); }
+  #loom-graph-svg .loom-gnode.selected .loom-gnode-box {
+    fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2;
+  }
+  #loom-graph-svg .loom-gnode.is-root .loom-gnode-box { stroke-dasharray: 4 3; }
+  #loom-graph-svg .loom-gnode { cursor: pointer; }
+  #loom-graph-svg .loom-gnode-text {
+    font-family: var(--font-mono); font-size: 11px; fill: var(--fg);
+    pointer-events: none; white-space: pre;
+  }
+  #loom-graph-svg .loom-gnode.selected .loom-gnode-text { fill: var(--accent); }
+  #loom-graph-svg .loom-gnode-tag {
+    font-family: var(--font-sans); font-size: 9px; fill: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; pointer-events: none;
+  }
+  /* Zoom controls, floated over the canvas top-left. */
+  .loom-graph-controls {
+    position: absolute; top: 0.6rem; left: 0.6rem; z-index: 2;
+    display: flex; flex-direction: column; gap: 0.3rem;
+  }
+  .loom-graph-controls button {
+    width: 2rem; height: 2rem; padding: 0; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); background: var(--surface); color: var(--fg-soft);
+    border-radius: var(--radius); cursor: pointer; font-size: 1.05rem; font-weight: 600;
+  }
+  .loom-graph-controls button:hover { border-color: var(--border-strong); color: var(--fg); }
+  .loom-graph-empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-style: italic; font-size: 0.9rem; text-align: center; padding: 1rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{# Shared per-token logprobs heatmap (colour + top-k popover) used by loom and
+   compare alike — provides window.acsAppendHeatmap. #}
+{% include "_logprobs_heatmap.html" %}
+<canvas id="loom-bg-anim" aria-hidden="true"></canvas>
+
+{# Hotkey legend overlay — toggled by "?" or the help button. #}
+<div class="loom-help-overlay" id="loom-help-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="loom-help-card">
+    <h2>Keyboard shortcuts <button type="button" class="loom-help-close" id="loom-help-close" aria-label="Close">×</button></h2>
+    <dl>
+      <dt><kbd>↑</kbd> / <kbd>↓</kbd></dt><dd>Previous / next sibling</dd>
+      <dt><kbd>←</kbd></dt><dd>Go to parent</dd>
+      <dt><kbd>→</kbd></dt><dd>Go to first child</dd>
+      <dt><kbd>g</kbd></dt><dd>Generate branches from the selected node</dd>
+      <dt><kbd>e</kbd></dt><dd>Edit the selected node's text</dd>
+      <dt><kbd>s</kbd></dt><dd>Split the node at the cursor (parent + child)</dd>
+      <dt><kbd>i</kbd></dt><dd>Insert a new sibling</dd>
+      <dt><kbd>Delete</kbd></dt><dd>Delete the node and its subtree</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Cancel an edit / close this panel</dd>
+      <dt><kbd>?</kbd></dt><dd>Toggle this legend</dd>
+    </dl>
+    <h3 class="loom-help-subhead">Heatmap symbols</h3>
+    <dl>
+      <dt><span class="loom-sym">⏎</span></dt><dd>Newline token (the marker is display-only — copied text keeps just the line break)</dd>
+      <dt><span class="loom-sym">⇥</span></dt><dd>Tab token (display-only, same as ⏎)</dd>
+      <dt><span class="loom-sym">␣</span></dt><dd>Space — used in the click popover so whitespace-only tokens aren't invisible</dd>
+      <dt><span class="loom-sym">· sampled</span></dt><dd>Popover row for the token the model actually picked when it wasn't in the top-k list (happens at high temperature)</dd>
+    </dl>
+  </div>
+</div>
+
+<section>
+  <div class="loom-head">
+    <div class="loom-head-row">
+      <div>
+        <h1 id="loom-title" data-loom-id="{{ loom.id }}">{{ loom.title or "Untitled loom" }}</h1>
+        <span class="loom-sub">Tree exploration — branch, backtrack, inspect per-token logprobs.</span>
+        <span class="loom-note"><a href="/loom">All looms</a> · Private to you — only you can see your looms.</span>
+      </div>
+      <div class="loom-actions">
+        <button type="button" class="loom-icon-btn" id="loom-rename-toggle" data-tooltip="Rename loom" aria-label="Rename loom">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </button>
+        <form action="/loom/{{ loom.id }}/delete" method="post" style="margin:0;" onsubmit="return confirm('Delete this loom? This cannot be undone.');">
+          <button type="submit" class="loom-icon-btn danger" data-tooltip="Delete loom" aria-label="Delete loom">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </form>
+      </div>
+    </div>
+    {# Title renames inline: the pencil swaps the h1 text for an input in
+       place (ACS-257) — see the rename block in the main script below. #}
+  </div>
+
+  {% if no_key %}
+  <p class="error">You don't have an active API key. Visit <a href="/dashboard">your dashboard</a> to create one.</p>
+  {% endif %}
+
+  <p id="loom-error" style="display:none;"></p>
+
+  <div class="loom-viewbar">
+    <div class="loom-viewseg" role="group" aria-label="Tree view mode">
+      <button type="button" id="loom-view-list" class="active" aria-pressed="true" data-tooltip="Sidebar list view">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        List
+      </button>
+      <button type="button" id="loom-view-graph" aria-pressed="false" data-tooltip="Graphical multiverse view">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.2 10.8 15.8 6.9"/><path d="M7.2 13.2 15.8 17.1"/></svg>
+        Graph
+      </button>
+    </div>
+    <span class="loom-viewbar-hint" id="loom-view-hint">Drag to pan · scroll to zoom</span>
+    <div class="loom-io">
+      <button type="button" id="loom-export" data-tooltip="Download this loom as JSON">Export JSON</button>
+      <button type="button" id="loom-export-txt" data-tooltip="Download the current path as plain text">Export text</button>
+      <button type="button" id="loom-import" data-tooltip="Import a loom JSON file into a new loom">Import JSON</button>
+      <input type="file" id="loom-import-file" accept="application/json,.json" style="display:none;">
+      <button type="button" id="loom-help" class="loom-help-btn" data-tooltip="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+    </div>
+  </div>
+
+  <div class="loom-layout">
+    <aside class="loom-tree">
+      <p class="loom-tree-heading">Tree</p>
+      <div id="loom-tree-root"></div>
+      <p id="loom-tree-empty" class="loom-empty">No nodes yet. Type a seed prompt below and generate.</p>
+    </aside>
+
+    <div class="loom-panel">
+      {# Graphical "multiverse" view — a pan/zoom SVG canvas of the whole node
+         tree, branching left→right, with the current path highlighted. Hidden
+         (display:none) in list view; shown when graph mode is active. Clicking
+         a node reuses the exact same selectNode() as the sidebar, so no data
+         model is forked. #}
+      <div class="loom-graph-wrap" id="loom-graph-wrap" style="display:none;">
+        <div class="loom-graph-controls">
+          <button type="button" id="loom-graph-zoom-in" data-tooltip="Zoom in" aria-label="Zoom in">+</button>
+          <button type="button" id="loom-graph-zoom-out" data-tooltip="Zoom out" aria-label="Zoom out">−</button>
+          <button type="button" id="loom-graph-fit" data-tooltip="Fit to view" aria-label="Fit to view" style="font-size:0.8rem;">⤢</button>
+        </div>
+        <svg id="loom-graph-svg" role="img" aria-label="Loom tree, graphical view">
+          <g id="loom-graph-edges"></g>
+          <g id="loom-graph-nodes"></g>
+        </svg>
+        <div class="loom-graph-empty" id="loom-graph-empty">No nodes yet. Seed a root prompt below to start the tree.</div>
+      </div>
+
+      {# Single seed-root block. JS moves it between "primary action, expanded"
+         (empty tree) and "collapsed, out of the way" (a root exists) by
+         toggling .is-collapsed and the <details open> state — never duplicated,
+         so the loom-root-text / loom-set-root ids stay unique.
+         NB: id is loom-seed-BLOCK, not loom-seed — the sampler "Seed (optional)"
+         number input below already owns id="loom-seed". #}
+      <div class="loom-seed" id="loom-seed-block">
+        <p class="loom-seed-heading" id="loom-seed-heading">Seed a new root prompt</p>
+        <details id="loom-seed-details">
+          <summary id="loom-seed-summary">Seed a new root prompt</summary>
+          <div class="loom-seed-body" style="margin-top:0.6rem;">
+            <textarea id="loom-root-text" rows="4" style="width:100%; font-family:var(--font-mono);"
+                      placeholder="The capital of France is"></textarea>
+            <button type="button" id="loom-set-root" {% if no_key %}disabled{% endif %}
+                    style="margin-top:0.4rem;">Set root (replaces tree)</button>
+          </div>
+        </details>
+      </div>
+
+      <div id="loom-node-panel">
+        <p class="loom-panel-heading">Selected node</p>
+        <div class="loom-context" id="loom-context" aria-live="polite"></div>
+        <div class="loom-node-actions" id="loom-node-actions">
+          <button type="button" id="loom-edit" class="term-help" data-help="Rewrite the selected node's text in place. The tree structure stays the same.">Edit<kbd>e</kbd></button>
+          <button type="button" id="loom-split" class="term-help" data-help="Cut the selected node in two at your cursor: the text before the cursor stays in this node, the text after moves into a new child node.">Split at cursor<kbd>s</kbd></button>
+          <button type="button" id="loom-sibling" class="term-help" data-help="Add a new, empty branch next to the selected node (same parent) that you write yourself instead of generating.">New sibling<kbd>i</kbd></button>
+        </div>
+        <div class="loom-edit-wrap" id="loom-edit-wrap">
+          <textarea id="loom-edit-text" aria-label="Edit node text" spellcheck="false"></textarea>
+          <div class="loom-edit-actions">
+            <button type="button" id="loom-edit-save">Save edit</button>
+            <button type="button" id="loom-edit-split" class="secondary" data-tooltip="Split into parent + child at the cursor">Split here</button>
+            <button type="button" class="secondary" id="loom-edit-cancel">Cancel</button>
+            <span class="loom-edit-hint">Save mutates this node in place · Split cuts it at the cursor · Esc cancels</span>
+          </div>
+        </div>
+      </div>
+
+      <form id="loom-form" class="loom-controls" onsubmit="return false;"
+            data-loom-id="{{ loom.id }}">
+        <label>Model
+          <select id="loom-model" name="model" {% if no_key %}disabled{% endif %}>
+            {% for m in available_models %}
+            <option value="{{ m.id }}" {% if m.id == selected_model_id %}selected{% endif %}>{{ m.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label><span class="term-help" tabindex="0" data-help="How many alternative continuations to generate from the selected node in one go — each becomes its own branch.">Branches (n)</span>
+          <input type="number" id="loom-n" class="loom-num" value="{{ loom_defaults.n }}" min="1" max="{{ loom_defaults.max_n }}">
+        </label>
+        <label><span class="term-help" tabindex="0" data-help="Upper limit on each generated branch's length, in tokens. Generation can stop earlier.">Max tokens</span>
+          <input type="number" id="loom-max-tokens" class="loom-num" value="{{ loom_defaults.max_tokens }}" min="1" max="1000">
+        </label>
+        <label><span class="term-help" tabindex="0" data-help="How random sampling is. 0 always picks the most likely token; 1 samples the model's raw probabilities; higher values get increasingly chaotic.">Temperature</span>
+          <input type="number" id="loom-temperature" class="loom-num" value="1.0" min="0" max="100" step="0.1">
+        </label>
+        <label><span class="term-help" tabindex="0" data-help="How many alternative tokens to record per position — click any token in the text to see them ranked by probability.">Logprobs (top-k)</span>
+          <input type="number" id="loom-logprobs" class="loom-num" value="{{ loom_defaults.logprobs }}" min="0" max="20">
+        </label>
+        <label><span class="term-help" tabindex="0" data-help="Makes sampling reproducible: the same node, settings and seed give the same branches. Empty = different result each run.">Seed (optional)</span>
+          <input type="number" id="loom-seed" class="loom-num" placeholder="auto" min="0">
+        </label>
+        <label>API key
+          <select id="loom-api-key" {% if no_key %}disabled{% endif %}>
+            {% for k in keys %}
+            <option value="{{ k.id }}" {% if k.id == selected_key_id %}selected{% endif %}>{{ k.name or "Unnamed key" }} ({{ k.key_prefix }})</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="loom-toggle" title="Colour completion tokens by probability (red = unlikely, green = likely)">
+          <input type="checkbox" id="loom-heatmap-toggle" checked>
+          Heatmap
+        </label>
+        <span class="spacer"></span>
+        <span id="loom-streaming">generating…</span>
+        <button type="button" id="loom-stop" class="secondary" style="display:none;">Stop</button>
+        <button type="button" id="loom-branch" {% if no_key %}disabled{% endif %}>Branch from here</button>
+      </form>
+
+      {# Only meaningful while the heatmap is on — hidden with it (ACS-264). #}
+      <div class="loom-legend" id="loom-legend">
+        <span>token probability</span>
+        <span class="swatch" aria-hidden="true"></span>
+        <span>low&nbsp;→&nbsp;high</span>
+        <span style="margin-left:auto;">Click a token to pin its alternatives.</span>
+      </div>
+    </div>
+  </div>
+
+  <script id="loom-bootstrap" type="application/json">{{ nodes | tojson }}</script>
+  <script>
+  (function () {
+    const loomId = document.getElementById('loom-form').dataset.loomId;
+    const errorEl = document.getElementById('loom-error');
+    const treeRoot = document.getElementById('loom-tree-root');
+    const treeEmpty = document.getElementById('loom-tree-empty');
+    const contextEl = document.getElementById('loom-context');
+    const streamingEl = document.getElementById('loom-streaming');
+    const branchBtn = document.getElementById('loom-branch');
+    const stopBtn = document.getElementById('loom-stop');
+    const heatmapToggle = document.getElementById('loom-heatmap-toggle');
+    const nodePanel = document.getElementById('loom-node-panel');
+    const seedBlock = document.getElementById('loom-seed-block');
+    const seedHeading = document.getElementById('loom-seed-heading');
+    const seedDetails = document.getElementById('loom-seed-details');
+    const seedSummary = document.getElementById('loom-seed-summary');
+
+    // Tier-2 editing surface (ACS-166).
+    const editWrap = document.getElementById('loom-edit-wrap');
+    const editText = document.getElementById('loom-edit-text');
+    const nodeActions = document.getElementById('loom-node-actions');
+    const editBtn = document.getElementById('loom-edit');
+    const splitBtn = document.getElementById('loom-split');
+    const siblingBtn = document.getElementById('loom-sibling');
+
+    // Graph-view elements (the pan/zoom SVG "multiverse").
+    const layoutEl = document.querySelector('.loom-layout');
+    const viewListBtn = document.getElementById('loom-view-list');
+    const viewGraphBtn = document.getElementById('loom-view-graph');
+    const viewHint = document.getElementById('loom-view-hint');
+    const graphWrap = document.getElementById('loom-graph-wrap');
+    const graphSvg = document.getElementById('loom-graph-svg');
+    const graphEdges = document.getElementById('loom-graph-edges');
+    const graphNodes = document.getElementById('loom-graph-nodes');
+    const graphEmpty = document.getElementById('loom-graph-empty');
+
+    // --- state ---------------------------------------------------------------
+    // nodes: id -> {id, parent_id, text, model, seed, position, logprobs, created_at}
+    let nodes = {};
+    let selectedId = null;
+    let es = null;            // active EventSource
+    let activeGenId = null;
+    // Live branch buffers while streaming: index -> {text, logprobs}
+    let liveBranches = {};
+    let liveParentId = null;
+    // Container the streaming branch blocks render into. The static context
+    // (ancestry + saved children) is rebuilt once per selection, not per chunk.
+    let liveHost = null;
+    let liveNumberBase = 0;
+    let graphMode = false;    // list view is the default
+    let editing = false;      // in-place node edit open?
+
+    try {
+      const boot = JSON.parse(document.getElementById('loom-bootstrap').textContent || '[]');
+      boot.forEach(n => { nodes[n.id] = n; });
+    } catch (e) { /* empty tree */ }
+
+    function showError(msg) {
+      errorEl.textContent = msg || '';
+      errorEl.style.display = msg ? '' : 'none';
+    }
+
+    function childrenOf(parentId) {
+      // Sort by (position, created_at): position (ACS-340) is the stable sibling
+      // ordinal — siblings from one generate batch share a created_at to the
+      // microsecond, so time alone reorders them (and export→import lost order).
+      // created_at is the tiebreaker for the rare concurrent-batch position clash.
+      return Object.values(nodes)
+        .filter(n => n.parent_id === parentId)
+        .sort((a, b) =>
+          ((a.position ?? 0) - (b.position ?? 0)) ||
+          (a.created_at || '').localeCompare(b.created_at || ''));
+    }
+    function roots() { return childrenOf(null); }
+    function treeIsEmpty() { return Object.keys(nodes).length === 0; }
+
+    // Append tokens honouring the heatmap toggle: coloured spans when on, plain
+    // text when off. Both renderContext() and renderLivePreview() go through
+    // this so the toggle governs every place tokens are drawn.
+    function appendTokens(container, logprobs, fallbackText) {
+      if (heatmapToggle && heatmapToggle.checked) {
+        window.acsAppendHeatmap(container, logprobs, fallbackText);
+      } else {
+        const text = (Array.isArray(logprobs) && logprobs.length)
+          ? logprobs.map(e => e.token).join('')
+          : (fallbackText || '');
+        container.appendChild(document.createTextNode(text));
+      }
+    }
+
+    // Show/hide progressive-disclosure chrome based on whether the tree has any
+    // nodes. Empty tree → seed field is the primary action (top, expanded), and
+    // the "Selected node" panel + "Branch from here" (which do nothing yet) are
+    // hidden. Once a node exists → seed field collapses out of the way and the
+    // node panel + branch control appear. Re-run on EVERY tree mutation.
+    let wasEmpty = null;  // last-seen empty state, so we only force-toggle on transitions
+    function updateChrome() {
+      const empty = treeIsEmpty();
+      if (nodePanel) nodePanel.style.display = empty ? 'none' : '';
+      if (branchBtn) branchBtn.style.display = empty ? 'none' : '';
+      // The edit surface only makes sense with a node selected; hide the actions
+      // when nothing is selected and close any open editor on an empty tree.
+      if (nodeActions) nodeActions.style.display = (empty || !selectedId) ? 'none' : 'flex';
+      if (empty && editing) closeEditor();
+      if (seedBlock) {
+        // Empty: expanded card at the top. Non-empty: collapsed <details> tucked away.
+        seedBlock.classList.toggle('is-collapsed', !empty);
+        if (seedHeading) seedHeading.style.display = empty ? '' : 'none';
+        // In the empty state the body is always shown, so the summary/triangle is
+        // pointless; in the non-empty state it's the click-to-expand affordance.
+        if (seedSummary) seedSummary.style.display = empty ? 'none' : '';
+        // Force the <details> open/closed ONLY when the empty state actually
+        // flips — otherwise a user who manually expanded the collapsed seed
+        // field (non-empty state) to type a new root would have it snapped shut
+        // on the next selectNode()/refreshTree(), losing sight of their input.
+        if (seedDetails && empty !== wasEmpty) seedDetails.open = empty;
+      }
+      wasEmpty = empty;
+    }
+
+    function snippet(text) {
+      const t = (text || '').replace(/\s+/g, ' ').trim();
+      return t.length > 48 ? t.slice(0, 48) + '…' : (t || '(empty)');
+    }
+
+    // --- tree rendering ------------------------------------------------------
+    function renderTree() {
+      const rootNodes = roots();
+      treeEmpty.style.display = rootNodes.length ? 'none' : '';
+      treeRoot.innerHTML = '';
+      const ul = document.createElement('ul');
+      rootNodes.forEach(n => ul.appendChild(renderNode(n, true)));
+      treeRoot.appendChild(ul);
+    }
+
+    function renderNode(node, isRoot) {
+      const li = document.createElement('li');
+      const row = document.createElement('div');
+      row.className = 'loom-node-row' + (isRoot ? ' loom-node-root' : '') +
+        (node.id === selectedId ? ' active' : '');
+      row.dataset.nodeId = node.id;
+
+      const snip = document.createElement('span');
+      snip.className = 'loom-node-snippet';
+      snip.textContent = snippet(node.text);
+      row.appendChild(snip);
+
+      const del = document.createElement('button');
+      del.className = 'loom-node-del';
+      del.title = 'Delete this node and its subtree';
+      del.textContent = '×';
+      del.addEventListener('click', (ev) => { ev.stopPropagation(); deleteNode(node.id); });
+      row.appendChild(del);
+
+      row.addEventListener('click', () => selectNode(node.id));
+      li.appendChild(row);
+
+      const kids = childrenOf(node.id);
+      if (kids.length) {
+        const ul = document.createElement('ul');
+        kids.forEach(k => ul.appendChild(renderNode(k, false)));
+        li.appendChild(ul);
+      }
+      return li;
+    }
+
+    // --- graphical (SVG) tree view ------------------------------------------
+    // A pan/zoom "multiverse" canvas: one box per node, curved parent→child
+    // edges, branching LEFT→RIGHT (depth = x, siblings spread on y). Layout is
+    // a simple recursive subtree-height allocation (each node owns a vertical
+    // band sized to its descendant leaf count) — enough to stay tidy without a
+    // full Reingold–Tilford. Reuses the SAME nodes/selectNode/ancestry as the
+    // sidebar; no data-model fork.
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const G_BOX_W = 168, G_BOX_H = 52;          // node box size
+    const G_COL = G_BOX_W + 72;                 // horizontal step between depths
+    const G_ROW = G_BOX_H + 22;                 // vertical step between rows
+    const G_PAD = 40;                           // canvas padding around content
+    // viewBox pan/zoom state (world coords). Set on first fit.
+    let vb = { x: 0, y: 0, w: 0, h: 0 };
+    let vbFitted = false;
+    let graphBounds = { maxX: 0, maxY: 0 };
+
+    function graphSnippet(text) {
+      const t = (text || '').replace(/\s+/g, ' ').trim();
+      if (!t) return '(empty)';
+      return t.length > 64 ? t.slice(0, 64) + '…' : t;
+    }
+
+    // Wrap a snippet into up to `maxLines` lines of ~`perLine` chars for the box.
+    function wrapLines(text, perLine, maxLines) {
+      // Hard-break any single word longer than the line width so an unbroken
+      // token (e.g. a long URL) can't overflow the box horizontally.
+      text = text.replace(new RegExp('(\\S{' + perLine + '})(?=\\S)', 'g'), '$1 ');
+      const words = text.split(' ');
+      const lines = [];
+      let cur = '';
+      for (const w of words) {
+        if (!cur) { cur = w; continue; }
+        if ((cur + ' ' + w).length <= perLine) { cur += ' ' + w; }
+        else { lines.push(cur); cur = w; if (lines.length === maxLines - 1) break; }
+      }
+      if (cur && lines.length < maxLines) lines.push(cur);
+      if (lines.length === maxLines) {
+        // Ensure the last visible line signals truncation if content remains.
+        let last = lines[maxLines - 1];
+        const rendered = lines.join(' ');
+        if (rendered.length < text.length) {
+          if (last.length > perLine - 1) last = last.slice(0, perLine - 1);
+          lines[maxLines - 1] = last.replace(/…?$/, '') + '…';
+        }
+      }
+      return lines;
+    }
+
+    // Assign x (by depth) and y (recursive subtree-band centre) to every node.
+    // Returns id -> {x, y, depth}.
+    function computeGraphLayout() {
+      const pos = {};
+      let nextLeafRow = 0;    // running row counter; each leaf consumes one row
+      function place(node, depth) {
+        const kids = childrenOf(node.id);
+        let y;
+        if (!kids.length) {
+          y = nextLeafRow * G_ROW;
+          nextLeafRow += 1;
+        } else {
+          const childYs = kids.map(k => place(k, depth + 1));
+          y = (childYs[0] + childYs[childYs.length - 1]) / 2;
+        }
+        pos[node.id] = { x: depth * G_COL, y: y, depth: depth };
+        return y;
+      }
+      roots().forEach(r => place(r, 0));
+      return pos;
+    }
+
+    function svgEl(name, attrs) {
+      const el = document.createElementNS(SVG_NS, name);
+      for (const k in attrs) el.setAttribute(k, attrs[k]);
+      return el;
+    }
+
+    // Curved connector (cubic Bézier) from parent's right edge to child's left.
+    function edgePath(px, py, cx, cy) {
+      const x1 = px + G_BOX_W, y1 = py + G_BOX_H / 2;
+      const x2 = cx, y2 = cy + G_BOX_H / 2;
+      const mx = (x1 + x2) / 2;
+      return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+    }
+
+    let lastGraphNodeCount = -1;   // node count at the previous graph render
+    function renderGraph() {
+      if (!graphMode) return;
+      graphEdges.innerHTML = '';
+      graphNodes.innerHTML = '';
+      const all = Object.values(nodes);
+      // If the tree grew/shrank since the last graph render (a branch was
+      // generated or a node deleted while in graph mode), re-fit so new nodes
+      // can't land outside the current pan/zoom and appear to vanish. A pure
+      // re-selection (same node count) leaves the user's pan/zoom untouched.
+      if (all.length !== lastGraphNodeCount) vbFitted = false;
+      lastGraphNodeCount = all.length;
+      graphEmpty.style.display = all.length ? 'none' : '';
+      if (!all.length) { graphBounds = { maxX: 0, maxY: 0 }; return; }
+
+      const pos = computeGraphLayout();
+      const onPath = new Set(ancestry(selectedId).map(n => n.id));
+
+      // Edges first (so nodes paint on top).
+      all.forEach(node => {
+        const p = pos[node.id];
+        if (!p || node.parent_id == null) return;
+        const pp = pos[node.parent_id];
+        if (!pp) return;
+        const onp = onPath.has(node.id) && onPath.has(node.parent_id);
+        graphEdges.appendChild(svgEl('path', {
+          d: edgePath(pp.x, pp.y, p.x, p.y),
+          class: 'loom-edge' + (onp ? ' on-path' : ''),
+        }));
+      });
+
+      let maxX = 0, maxY = 0;
+      all.forEach(node => {
+        const p = pos[node.id];
+        if (!p) return;
+        maxX = Math.max(maxX, p.x + G_BOX_W);
+        maxY = Math.max(maxY, p.y + G_BOX_H);
+        const isRoot = node.parent_id == null;
+        const snip = graphSnippet(node.text);
+        const fullText = (node.text || '').trim() || '(empty)';
+        const label = (isRoot ? 'Root: ' : '') + fullText;
+        const g = svgEl('g', {
+          class: 'loom-gnode'
+            + (isRoot ? ' is-root' : '')
+            + (onPath.has(node.id) ? ' on-path' : '')
+            + (node.id === selectedId ? ' selected' : ''),
+          transform: `translate(${p.x}, ${p.y})`,
+          role: 'button', tabindex: '0', 'aria-label': label,
+        });
+        g.appendChild(svgEl('rect', {
+          class: 'loom-gnode-box', x: 0, y: 0, width: G_BOX_W, height: G_BOX_H, rx: 8, ry: 8,
+        }));
+        const tag = svgEl('text', { class: 'loom-gnode-tag', x: 8, y: 13 });
+        tag.textContent = isRoot ? 'root' : (node.model || 'node');
+        g.appendChild(tag);
+        const lines = wrapLines(snip, 21, 2);
+        lines.forEach((ln, i) => {
+          const t = svgEl('text', { class: 'loom-gnode-text', x: 8, y: 28 + i * 13 });
+          t.textContent = ln;
+          g.appendChild(t);
+        });
+        // Native tooltip shows the FULL node text (the box only shows a snippet).
+        const title = svgEl('title', {});
+        title.textContent = fullText;
+        g.appendChild(title);
+        g.addEventListener('click', () => selectNode(node.id));
+        g.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectNode(node.id); }
+        });
+        graphNodes.appendChild(g);
+      });
+      graphBounds = { maxX: maxX, maxY: maxY };
+      if (!vbFitted) fitGraph();
+      else applyViewBox();
+    }
+
+    function applyViewBox() {
+      graphSvg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+    }
+
+    // Fit the whole tree into the canvas (with padding), resetting pan/zoom.
+    function fitGraph() {
+      const w = (graphBounds.maxX || G_BOX_W) + G_PAD * 2;
+      const h = (graphBounds.maxY || G_BOX_H) + G_PAD * 2;
+      vb = { x: -G_PAD, y: -G_PAD, w: w, h: h };
+      vbFitted = true;
+      applyViewBox();
+    }
+
+    function zoomBy(factor, cx, cy) {
+      // Zoom about a world-space anchor (cx, cy); default to viewBox centre.
+      if (cx == null) cx = vb.x + vb.w / 2;
+      if (cy == null) cy = vb.y + vb.h / 2;
+      const nw = Math.max(120, Math.min(20000, vb.w * factor));
+      const nh = nw * (vb.h / vb.w);
+      vb.x = cx - (cx - vb.x) * (nw / vb.w);
+      vb.y = cy - (cy - vb.y) * (nh / vb.h);
+      vb.w = nw; vb.h = nh;
+      applyViewBox();
+    }
+
+    // --- context + heatmap rendering ----------------------------------------
+    function ancestry(nodeId) {
+      // root -> ... -> node
+      const chain = [];
+      const seen = new Set();
+      let cur = nodeId;
+      while (cur && !seen.has(cur) && nodes[cur]) {
+        seen.add(cur);
+        chain.push(nodes[cur]);
+        cur = nodes[cur].parent_id;
+      }
+      return chain.reverse();
+    }
+
+    // Token heatmap colouring + top-k popover come from the shared
+    // _logprobs_heatmap.html partial (window.acsAppendHeatmap).
+
+    function renderContext(nodeId) {
+      contextEl.innerHTML = '';
+      if (!nodeId || !nodes[nodeId]) {
+        contextEl.innerHTML = '<span class="loom-prefix">Select a node in the tree to inspect it.</span>';
+        return;
+      }
+      const chain = ancestry(nodeId);
+      // Prefix (all ancestors) rendered dim; the selected node's own text gets
+      // the heatmap if it has logprobs (and the heatmap toggle is on).
+      chain.forEach((node, i) => {
+        const isSelected = (i === chain.length - 1);
+        if (isSelected && Array.isArray(node.logprobs) && node.logprobs.length) {
+          appendTokens(contextEl, node.logprobs, node.text);
+        } else {
+          const span = document.createElement('span');
+          span.className = isSelected ? '' : 'loom-prefix';
+          span.textContent = node.text;
+          contextEl.appendChild(span);
+        }
+      });
+      // The selected node's persisted children render as branch blocks in the
+      // same spot the live preview streams into (ACS-254): when a generation
+      // finishes and refreshTree() swaps preview → DB nodes, the branches stay
+      // visibly in place instead of jumping to the sidebar only.
+      childrenOf(nodeId).forEach((kid, i) => {
+        const { wrap, tag } = makeBranchBlock(i + 1, 'open', kid.logprobs, kid.text);
+        tag.classList.add('loom-branch-open');
+        tag.title = 'Open this branch';
+        tag.addEventListener('click', () => {
+          // Mid-stream the live preview is keyed to the selection; changing it
+          // would re-parent the streaming branches visually. Wait for done.
+          if (activeGenId) return;
+          selectNode(kid.id);
+        });
+        contextEl.appendChild(wrap);
+      });
+    }
+
+    // One builder for live and saved branch blocks, so the stream→saved swap
+    // is pixel-identical apart from the tag label.
+    function makeBranchBlock(num, label, logprobs, text) {
+      const wrap = document.createElement('div');
+      wrap.className = 'loom-branch';
+      const tag = document.createElement('span');
+      tag.className = 'loom-branch-tag';
+      tag.textContent = 'branch ' + num + ' — ' + label + '\n';
+      wrap.appendChild(tag);
+      appendTokens(wrap, logprobs, text);
+      return { wrap, tag };
+    }
+
+
+    // Keep both views in sync: the sidebar list always re-renders; the graph
+    // re-renders only when it's the active view. Everything downstream (select,
+    // refresh, init) calls this instead of renderTree() directly.
+    function syncViews() {
+      renderTree();
+      renderGraph();
+    }
+
+    function selectNode(nodeId) {
+      // Switching nodes closes any open editor so edits can't leak between nodes.
+      if (editing && nodeId !== selectedId) closeEditor();
+      selectedId = nodeId;
+      syncViews();
+      renderContext(nodeId);
+      updateChrome();
+    }
+
+    // --- API calls -----------------------------------------------------------
+    async function refreshTree() {
+      const r = await fetch('/loom/' + loomId + '/tree');
+      if (!r.ok) return;
+      const data = await r.json();
+      nodes = {};
+      (data.nodes || []).forEach(n => { nodes[n.id] = n; });
+      if (selectedId && !nodes[selectedId]) selectedId = null;
+      syncViews();
+      renderContext(selectedId);
+      updateChrome();
+    }
+
+    async function deleteNode(nodeId) {
+      // Block deletes while a branch is streaming: the server rejects them
+      // anyway (delete-while-generating), and letting the tree go empty
+      // mid-stream would hide the node panel out from under the live preview
+      // and leave the EventSource running against a deleted parent.
+      if (activeGenId) { showError('Stop the current generation before deleting nodes.'); return; }
+      if (!confirm('Delete this node and its entire subtree?')) return;
+      const r = await fetch('/loom/' + loomId + '/nodes/' + nodeId + '/delete', { method: 'POST' });
+      if (r.status === 204) { await refreshTree(); }
+      else { showError('Delete failed.'); }
+    }
+
+    document.getElementById('loom-set-root').addEventListener('click', async () => {
+      const text = document.getElementById('loom-root-text').value;
+      if (!text.trim()) { showError('Enter a seed prompt first.'); return; }
+      showError('');
+      const fd = new FormData();
+      fd.append('text', text);
+      const r = await fetch('/loom/' + loomId + '/root', { method: 'POST', body: fd });
+      if (!r.ok) { showError('Could not set root.'); return; }
+      const data = await r.json();
+      await refreshTree();
+      if (data.node) selectNode(data.node.id);
+    });
+
+    function setStreaming(on) {
+      streamingEl.classList.toggle('show', on);
+      if (on) streamingEl.textContent = 'generating…';
+      stopBtn.style.display = on ? '' : 'none';
+      branchBtn.disabled = on;
+    }
+
+    branchBtn.addEventListener('click', async () => {
+      if (!selectedId) { showError('Select (or create) a node to branch from.'); return; }
+      showError('');
+      const fd = new FormData();
+      fd.append('parent_id', selectedId);
+      fd.append('n', document.getElementById('loom-n').value);
+      fd.append('max_tokens', document.getElementById('loom-max-tokens').value);
+      fd.append('temperature', document.getElementById('loom-temperature').value);
+      fd.append('logprobs', document.getElementById('loom-logprobs').value);
+      const seed = document.getElementById('loom-seed').value;
+      if (seed !== '') fd.append('seed', seed);
+      fd.append('model', document.getElementById('loom-model').value);
+      const key = document.getElementById('loom-api-key');
+      if (key && key.value) fd.append('api_key_id', key.value);
+
+      const r = await fetch('/loom/' + loomId + '/generate', { method: 'POST', body: fd });
+      if (!r.ok) {
+        let msg = 'Generation failed.';
+        try { const j = await r.json(); msg = (j.error && j.error.message) || j.error.code || msg; } catch (e) {}
+        showError(msg);
+        return;
+      }
+      const data = await r.json();
+      activeGenId = data.generation_id;
+      liveParentId = data.parent_id;
+      liveBranches = {};
+      setStreaming(true);
+      openStream(data.generation_id);
+    });
+
+    stopBtn.addEventListener('click', async () => {
+      if (!activeGenId) return;
+      await fetch('/loom/' + loomId + '/generations/' + activeGenId + '/cancel', { method: 'POST' });
+    });
+
+    function openStream(genId) {
+      if (es) { es.close(); es = null; }
+      es = new EventSource('/loom/' + loomId + '/generations/' + genId + '/events');
+
+      es.addEventListener('loom_chunk', (ev) => {
+        let d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+        const idx = d.index;
+        const slot = liveBranches[idx] || (liveBranches[idx] = { text: '', logprobs: [] });
+        // Frames carry the FULL accumulated branch (server sends full text, not a
+        // delta), so always SET — never append. This is idempotent, so a replay
+        // snapshot followed by a live frame for the same tokens can't double up.
+        slot.text = d.text || '';
+        slot.logprobs = Array.isArray(d.logprobs) ? d.logprobs : [];
+        // A token arrived, so we're past any cold boot — restore the label.
+        streamingEl.textContent = 'generating…';
+        renderLivePreview();
+      });
+
+      let loomSawRealStage = false;
+      es.addEventListener('status', (ev) => {
+        // Cold-boot / warm-up progress from the upstream — show it instead of a
+        // silent hang while a Modal container spins up.
+        let d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+        if (d && d.phase === 'cold_boot') {
+          // Prefer the container-reported stage (ACS-272) over the generic
+          // line. Monotonic: a transient waiting_for_gpu (Dict-read failure)
+          // never overwrites a real stage already shown.
+          const isReal = d.stage && d.stage !== 'waiting_for_gpu';
+          if (isReal) loomSawRealStage = true;
+          if (d.stage_label && (isReal || !loomSawRealStage)) {
+            streamingEl.textContent = d.stage_label + '… (cold boot)';
+          } else if (!d.stage_label) {
+            streamingEl.textContent = 'warming up the model… (cold boot, can take a few minutes)';
+          }
+        }
+      });
+
+      es.addEventListener('error', (ev) => {
+        // EventSource fires a generic 'error' on network close too; only treat
+        // a payload-bearing frame as a real error.
+        if (ev && ev.data) {
+          let d; try { d = JSON.parse(ev.data); } catch (e) { d = null; }
+          if (d && d.message) showError(d.message);
+        }
+      });
+
+      es.addEventListener('done', async (ev) => {
+        es.close(); es = null;
+        setStreaming(false);
+        activeGenId = null;
+        // Drop the live buffers now that the branches are (about to be)
+        // persisted — a later renderLivePreview() call must not resurrect
+        // stale "generating…" blocks next to their saved copies.
+        liveBranches = {};
+        liveHost = null;
+        let d; try { d = JSON.parse(ev.data); } catch (e) { d = null; }
+        if (d && d.status === 'failed' && d.error_message) showError(d.error_message);
+        // The durable nodes are now written — reload the tree from the DB.
+        await refreshTree();
+      });
+    }
+
+    // While streaming, show the first live branch under the selected context so
+    // the user sees tokens arrive before the nodes are persisted.
+    function renderLivePreview() {
+      // Chunks arrive at token rate, so the static part (ancestry + saved
+      // children, heatmap spans and all) renders once per selection and only
+      // the live branch blocks rebuild per chunk. renderContext() wipes
+      // contextEl, so a stale liveHost is detected by containment.
+      if (!liveHost || !contextEl.contains(liveHost)) {
+        renderContext(selectedId);
+        // Streaming branches continue the numbering after the already-persisted
+        // children, matching what renderContext() shows once they land. Node
+        // membership can't change mid-stream (persistence happens on 'done',
+        // deletes are blocked), so the count is stable for the stream's life.
+        liveNumberBase = childrenOf(selectedId).length;
+        liveHost = document.createElement('div');
+        contextEl.appendChild(liveHost);
+      }
+      liveHost.innerHTML = '';
+      const order = Object.keys(liveBranches).map(Number).sort((a, b) => a - b);
+      order.forEach(idx => {
+        const slot = liveBranches[idx];
+        const { wrap } = makeBranchBlock(liveNumberBase + idx + 1, 'generating…', slot.logprobs, slot.text);
+        liveHost.appendChild(wrap);
+      });
+    }
+
+    // Heatmap on/off: re-render whatever is currently shown so the toggle
+    // affects existing tokens, not just future generations. Redraw the live
+    // preview mid-stream, else the selected node's context.
+    const heatmapLegend = document.getElementById('loom-legend');
+    function syncHeatmapLegend() {
+      if (heatmapLegend) heatmapLegend.hidden = !(heatmapToggle && heatmapToggle.checked);
+    }
+    syncHeatmapLegend();
+    if (heatmapToggle) {
+      heatmapToggle.addEventListener('change', () => {
+        syncHeatmapLegend();
+        // Force the static part to rebuild too — the toggle affects ancestry
+        // and saved-children tokens, which renderLivePreview otherwise reuses.
+        liveHost = null;
+        if (activeGenId) renderLivePreview();
+        else renderContext(selectedId);
+      });
+    }
+
+    // --- inline title rename (ACS-257, mirrors the workbench) ----------------
+    // The pencil swaps the h1 text for an input in place; Enter/blur save via
+    // fetch (a full-reload redirect would kill a live branch stream and any
+    // unsaved node-editor/seed text), Esc cancels. 401 → session expired → login.
+    const renameToggle = document.getElementById('loom-rename-toggle');
+    const titleEl = document.getElementById('loom-title');
+    if (renameToggle && titleEl) {
+      renameToggle.addEventListener('click', () => {
+        if (titleEl.querySelector('input')) return;
+        const orig = titleEl.textContent;
+        const input = document.createElement('input');
+        input.className = 'loom-title-input';
+        input.setAttribute('aria-label', 'Loom title — Enter saves, Escape cancels');
+        input.maxLength = 120;
+        input.value = orig;
+        titleEl.textContent = '';
+        titleEl.appendChild(input);
+        input.focus();
+        input.select();
+        let settled = false;
+        const finish = (commit) => {
+          if (settled) return;
+          settled = true;
+          const val = commit ? input.value.trim() : '';
+          if (!val || val === orig) { titleEl.textContent = orig; return; }
+          titleEl.textContent = val;  // optimistic; server echo corrects below
+          const fd = new FormData();
+          fd.append('title', val);
+          fetch('/loom/' + titleEl.dataset.loomId + '/rename', {
+            method: 'POST', body: fd, credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+          }).then(async (r) => {
+            if (r.status === 401) { window.location.href = '/login'; return; }
+            if (!r.ok) throw new Error('rename failed (' + r.status + ')');
+            const t = (await r.json()).title;
+            // Don't wipe an editor reopened while this fetch was in flight.
+            if (!titleEl.querySelector('input')) titleEl.textContent = t;
+          }).catch(() => {
+            if (!titleEl.querySelector('input')) titleEl.textContent = orig;
+            showError('Rename failed — try again.');
+          });
+        };
+        input.addEventListener('keydown', (e) => {
+          // isComposing: Enter confirming an IME composition must not commit.
+          if (e.isComposing || e.keyCode === 229) return;
+          // stopPropagation: Escape must only cancel THIS edit, not also fall
+          // through to the page hotkeys (close help overlay / node editor).
+          if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(true); }
+          else if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+        });
+        input.addEventListener('blur', () => finish(true));
+      });
+    }
+
+    // --- view toggle (List / Graph) -----------------------------------------
+    const VIEW_KEY = 'acs.loom.view';    // shared across looms; defaults to list
+
+    function setView(mode, persist) {
+      graphMode = (mode === 'graph');
+      layoutEl.classList.toggle('is-graph', graphMode);
+      graphWrap.style.display = graphMode ? '' : 'none';
+      viewListBtn.classList.toggle('active', !graphMode);
+      viewGraphBtn.classList.toggle('active', graphMode);
+      viewListBtn.setAttribute('aria-pressed', String(!graphMode));
+      viewGraphBtn.setAttribute('aria-pressed', String(graphMode));
+      if (viewHint) viewHint.style.visibility = graphMode ? 'visible' : 'hidden';
+      if (persist) { try { localStorage.setItem(VIEW_KEY, mode); } catch (e) {} }
+      if (graphMode) { vbFitted = false; renderGraph(); }
+    }
+
+    viewListBtn.addEventListener('click', () => setView('list', true));
+    viewGraphBtn.addEventListener('click', () => setView('graph', true));
+
+    // Zoom buttons + fit.
+    document.getElementById('loom-graph-zoom-in').addEventListener('click', () => zoomBy(1 / 1.25));
+    document.getElementById('loom-graph-zoom-out').addEventListener('click', () => zoomBy(1.25));
+    document.getElementById('loom-graph-fit').addEventListener('click', () => fitGraph());
+
+    // Wheel zoom, anchored at the cursor.
+    graphSvg.addEventListener('wheel', (ev) => {
+      ev.preventDefault();
+      const pt = clientToWorld(ev.clientX, ev.clientY);
+      zoomBy(ev.deltaY < 0 ? 1 / 1.1 : 1.1, pt.x, pt.y);
+    }, { passive: false });
+
+    // Drag to pan (translate the viewBox by the world-space delta). We defer
+    // pointer capture until the pointer actually moves past a small threshold:
+    // capturing on pointerdown retargets the synthesized `click` to the SVG, so
+    // a node's own click handler would never fire (you couldn't select a node).
+    // A no-move press stays a click; a real drag captures + pans (and the
+    // capture suppresses the click-select at drag-end, so grabbing over a node
+    // pans rather than selecting it).
+    const PAN_THRESHOLD = 4;   // px before a press becomes a drag
+    let pointerDown = false, moved = false, panStart = null, vbStart = null, capId = null;
+    graphSvg.addEventListener('pointerdown', (ev) => {
+      pointerDown = true; moved = false;
+      panStart = { x: ev.clientX, y: ev.clientY };
+      vbStart = { x: vb.x, y: vb.y };
+    });
+    graphSvg.addEventListener('pointermove', (ev) => {
+      if (!pointerDown) return;
+      const dx = ev.clientX - panStart.x, dy = ev.clientY - panStart.y;
+      if (!moved && Math.hypot(dx, dy) < PAN_THRESHOLD) return;
+      if (!moved) {
+        moved = true; graphSvg.classList.add('dragging');
+        try { graphSvg.setPointerCapture(ev.pointerId); capId = ev.pointerId; } catch (e) {}
+      }
+      const rect = graphSvg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;   // canvas not laid out yet
+      vb.x = vbStart.x - dx * (vb.w / rect.width);
+      vb.y = vbStart.y - dy * (vb.h / rect.height);
+      applyViewBox();
+    });
+    function endPan() {
+      if (!pointerDown) return;
+      pointerDown = false; graphSvg.classList.remove('dragging');
+      if (capId != null) { try { graphSvg.releasePointerCapture(capId); } catch (e) {} capId = null; }
+    }
+    graphSvg.addEventListener('pointerup', endPan);
+    graphSvg.addEventListener('pointercancel', endPan);
+
+    // Map a client-space point to world (viewBox) coords for cursor-anchored zoom.
+    function clientToWorld(clientX, clientY) {
+      const rect = graphSvg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return { x: vb.x + vb.w / 2, y: vb.y + vb.h / 2 };
+      return {
+        x: vb.x + ((clientX - rect.left) / rect.width) * vb.w,
+        y: vb.y + ((clientY - rect.top) / rect.height) * vb.h,
+      };
+    }
+
+    // --- Tier-2 editing surface (ACS-166) ------------------------------------
+    // In-place edit, split-at-cursor, new sibling, export/import, and a dense
+    // hotkey scheme. Every mutation hits an owner-scoped endpoint that clears
+    // stale logprobs on edited text (see routes/loom.py). All hotkeys no-op
+    // while focus is in a text field so typing never triggers navigation.
+
+    function openEditor() {
+      if (!selectedId || !nodes[selectedId]) return;
+      if (activeGenId) { showError('Stop the current generation before editing.'); return; }
+      editing = true;
+      editText.value = nodes[selectedId].text || '';
+      editWrap.classList.add('show');
+      contextEl.style.display = 'none';
+      editText.focus();
+      // Put the cursor at the end so a split defaults to "append a child".
+      editText.setSelectionRange(editText.value.length, editText.value.length);
+    }
+    function closeEditor() {
+      editing = false;
+      editWrap.classList.remove('show');
+      contextEl.style.display = '';
+    }
+
+    async function saveEdit() {
+      if (!selectedId) return;
+      const fd = new FormData();
+      fd.append('text', editText.value);
+      const r = await fetch('/loom/' + loomId + '/nodes/' + selectedId + '/edit', { method: 'POST', body: fd });
+      if (!r.ok) { showError('Edit failed.'); return; }
+      showError('');
+      closeEditor();
+      await refreshTree();
+      selectNode(selectedId);
+    }
+
+    // Split the selected node at the cursor into parent + child. You split from
+    // *inside* the editor so you can place the cursor precisely: if the editor
+    // isn't open, we open it and let the user position the caret rather than
+    // blind-splitting at the end (which would silently insert an empty child).
+    // When editing, the edited text AND the split offset go in ONE request so a
+    // failed split can't leave the text saved but unsplit (no partial write).
+    async function splitAtCursor() {
+      if (!selectedId) { showError('Select a node to split.'); return; }
+      if (activeGenId) { showError('Stop the current generation before splitting.'); return; }
+      if (!editing) {
+        // Open the editor so the user can choose the split point.
+        openEditor();
+        return;
+      }
+      const off = editText.selectionStart;
+      const fd = new FormData();
+      fd.append('offset', String(off));
+      fd.append('text', editText.value);   // atomic: commit edited body + split together
+      const r = await fetch('/loom/' + loomId + '/nodes/' + selectedId + '/split', { method: 'POST', body: fd });
+      if (!r.ok) {
+        // Editor stays open on failure so the user's text + caret aren't lost.
+        let msg = 'Split failed.';
+        try { const j = await r.json(); msg = (j.error && j.error.message) || msg; } catch (e) {}
+        showError(msg);
+        return;
+      }
+      showError('');
+      closeEditor();
+      const data = await r.json();
+      await refreshTree();
+      // Select the new tail child so the user keeps working at the split point.
+      if (data.child) selectNode(data.child.id);
+    }
+
+    async function newSibling() {
+      if (!selectedId || !nodes[selectedId]) { showError('Select a node first.'); return; }
+      if (activeGenId) { showError('Stop the current generation first.'); return; }
+      if (nodes[selectedId].parent_id == null) {
+        showError('The root has no siblings — create a new loom for a different seed.');
+        return;
+      }
+      const fd = new FormData();
+      fd.append('text', '');
+      const r = await fetch('/loom/' + loomId + '/nodes/' + selectedId + '/sibling', { method: 'POST', body: fd });
+      if (!r.ok) {
+        let msg = 'Could not add sibling.';
+        try { const j = await r.json(); msg = (j.error && j.error.message) || msg; } catch (e) {}
+        showError(msg);
+        return;
+      }
+      showError('');
+      const data = await r.json();
+      await refreshTree();
+      if (data.node) { selectNode(data.node.id); openEditor(); }
+    }
+
+    if (editBtn) editBtn.addEventListener('click', openEditor);
+    if (splitBtn) splitBtn.addEventListener('click', () => splitAtCursor());
+    if (siblingBtn) siblingBtn.addEventListener('click', newSibling);
+    document.getElementById('loom-edit-save').addEventListener('click', saveEdit);
+    document.getElementById('loom-edit-split').addEventListener('click', () => splitAtCursor());
+    document.getElementById('loom-edit-cancel').addEventListener('click', closeEditor);
+
+    // --- export / import -----------------------------------------------------
+    document.getElementById('loom-export').addEventListener('click', () => {
+      // The server sets Content-Disposition, so a plain navigation downloads it.
+      window.location.href = '/loom/' + loomId + '/export';
+    });
+
+    // Plain-text transcript of the CURRENT path (root → selected node).
+    document.getElementById('loom-export-txt').addEventListener('click', () => {
+      if (!selectedId) { showError('Select a node to export its path.'); return; }
+      const text = ancestry(selectedId).map(n => n.text || '').join('');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'loom-path.txt';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+
+    const importFile = document.getElementById('loom-import-file');
+    document.getElementById('loom-import').addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', async () => {
+      const f = importFile.files && importFile.files[0];
+      if (!f) return;
+      let payload;
+      try { payload = JSON.parse(await f.text()); }
+      catch (e) { showError('Import failed: not valid JSON.'); importFile.value = ''; return; }
+      const r = await fetch('/loom/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      importFile.value = '';
+      if (!r.ok) {
+        let msg = 'Import failed.';
+        try { const j = await r.json(); msg = (j.error && j.error.message) || j.error.code || msg; } catch (e) {}
+        showError(msg);
+        return;
+      }
+      const data = await r.json();
+      if (data.loom_id) window.location.href = '/loom/' + data.loom_id;
+    });
+
+    // --- hotkey legend overlay -----------------------------------------------
+    const helpOverlay = document.getElementById('loom-help-overlay');
+    function toggleHelp(force) {
+      const show = (typeof force === 'boolean') ? force : !helpOverlay.classList.contains('show');
+      helpOverlay.classList.toggle('show', show);
+      // The page must not scroll behind an open modal (ACS-258).
+      document.body.style.overflow = show ? 'hidden' : '';
+    }
+    document.getElementById('loom-help').addEventListener('click', () => toggleHelp());
+    document.getElementById('loom-help-close').addEventListener('click', () => toggleHelp(false));
+    helpOverlay.addEventListener('click', (ev) => { if (ev.target === helpOverlay) toggleHelp(false); });
+
+    // --- keyboard navigation + ops -------------------------------------------
+    // Sibling ↑/↓, parent ←, first child →. A key each for generate/edit/split/
+    // sibling/delete. All suppressed while a text field is focused (so typing in
+    // the edit box, rename, or seed textarea never fires navigation).
+    function siblingsOf(nodeId) {
+      const n = nodes[nodeId];
+      if (!n) return [];
+      return childrenOf(n.parent_id);   // childrenOf(null) → roots, so root works too
+    }
+    function navSibling(delta) {
+      if (!selectedId) return;
+      const sibs = siblingsOf(selectedId);
+      const idx = sibs.findIndex(s => s.id === selectedId);
+      if (idx < 0) return;
+      const next = sibs[idx + delta];
+      if (next) selectNode(next.id);
+    }
+    function navParent() {
+      const n = selectedId && nodes[selectedId];
+      if (n && n.parent_id && nodes[n.parent_id]) selectNode(n.parent_id);
+    }
+    function navChild() {
+      if (!selectedId) return;
+      const kids = childrenOf(selectedId);
+      if (kids.length) selectNode(kids[0].id);
+    }
+
+    document.addEventListener('keydown', (ev) => {
+      // "?" and Escape are allowed to work even from some contexts, but never
+      // steal keystrokes from a text field.
+      const t = ev.target;
+      const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+
+      if (ev.key === 'Escape') {
+        if (helpOverlay.classList.contains('show')) { toggleHelp(false); return; }
+        if (editing) { closeEditor(); return; }
+        return;
+      }
+      // Let the edit box keep every other key (incl. our nav letters) while open.
+      if (inField) return;
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+
+      switch (ev.key) {
+        case '?':                        ev.preventDefault(); toggleHelp(); break;
+        case 'ArrowUp':                  ev.preventDefault(); navSibling(-1); break;
+        case 'ArrowDown':                ev.preventDefault(); navSibling(1); break;
+        case 'ArrowLeft':                ev.preventDefault(); navParent(); break;
+        case 'ArrowRight':               ev.preventDefault(); navChild(); break;
+        case 'g': case 'G':              if (selectedId && !branchBtn.disabled) { ev.preventDefault(); branchBtn.click(); } break;
+        case 'e': case 'E':              if (selectedId) { ev.preventDefault(); openEditor(); } break;
+        case 's': case 'S':              if (selectedId) { ev.preventDefault(); splitAtCursor(); } break;
+        case 'i': case 'I':              if (selectedId) { ev.preventDefault(); newSibling(); } break;
+        case 'Delete':                   if (selectedId) { ev.preventDefault(); deleteNode(selectedId); } break;
+      }
+    });
+
+    // --- init ----------------------------------------------------------------
+    let initialView = 'list';
+    try { if (localStorage.getItem(VIEW_KEY) === 'graph') initialView = 'graph'; } catch (e) {}
+    setView(initialView, false);
+
+    syncViews();
+    const firstRoot = roots()[0];
+    if (firstRoot) selectNode(firstRoot.id);
+    else renderContext(null);
+    updateChrome();
+  })();
+  </script>
+
+  <script>
+  // --- Faint branching-tree backdrop ("loom" animation) --------------------
+  // Self-contained: a single growing tree of completion paths that periodically
+  // forks into 2-3 children — the same metaphor as the loom itself. Lifted (and
+  // made fainter) from the landing-page animation experiment. Plays ONCE per
+  // page load — one tree, then it fades out and stops. Respects
+  // prefers-reduced-motion.
+  (function () {
+    var canvas = document.getElementById('loom-bg-anim');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    var W = 0, H = 0, raf = null;
+
+    function resize() {
+      W = canvas.clientWidth; H = canvas.clientHeight;
+      canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    // --- colours (pulled from the theme, refreshed on toggle) ---
+    function hexToRgb(h) {
+      h = (h || '').trim().replace('#', '');
+      if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+      var n = parseInt(h, 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    var col = { a: { r: 29, g: 122, b: 147 }, b: { r: 204, g: 102, b: 32 } };
+    function readColors() {
+      try {
+        var cs = getComputedStyle(document.documentElement);
+        var a = cs.getPropertyValue('--accent'), b = cs.getPropertyValue('--accent-2');
+        if (a) col.a = hexToRgb(a);
+        if (b) col.b = hexToRgb(b);
+      } catch (e) {}
+    }
+    readColors();
+    try {
+      new MutationObserver(readColors).observe(document.documentElement,
+        { attributes: true, attributeFilter: ['data-theme'] });
+    } catch (e) {}
+    function rgba(c, a) { return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + a + ')'; }
+    function lerp(a, b, t) {
+      return { r: Math.round(a.r + (b.r - a.r) * t), g: Math.round(a.g + (b.g - a.g) * t), b: Math.round(a.b + (b.b - a.b) * t) };
+    }
+    function fade(a) {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,' + a + ')';
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // --- loom: branching completion tree ---
+    var tips = [];
+    // A single root tip, seeded at the top-right. It grows and forks into its
+    // own children — one tree, seeded just once per page load.
+    function seedLoom() {
+      tips.push({ x: W * (0.88 + Math.random() * 0.07), y: 16 + Math.random() * 18,
+                  ang: 2.3 + (Math.random() - 0.5) * 0.2, rem: 40 + Math.random() * 40, depth: 0 });
+    }
+    function loomStep() {
+      // Gentle per-frame fade => trails linger for several seconds before
+      // melting away, so the tree's recent path stays visible without
+      // accumulating permanent traces. (Bigger value = faster fade.)
+      fade(0.01);
+      ctx.lineWidth = 1.3;
+      for (var i = tips.length - 1; i >= 0; i--) {
+        var t = tips[i];
+        t.ang += (Math.random() - 0.5) * 0.06;
+        var nx = t.x + Math.cos(t.ang) * 2.0, ny = t.y + Math.sin(t.ang) * 2.0;
+        var c = lerp(col.a, col.b, Math.min(1, (t.depth / 6) * 0.7));
+        ctx.strokeStyle = rgba(c, 0.85);
+        ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(nx, ny); ctx.stroke();
+        t.x = nx; t.y = ny; t.rem--;
+        if (t.x < -20 || t.x > W + 20 || t.y > H + 20) { tips.splice(i, 1); continue; }
+        if (t.rem <= 0) {
+          ctx.fillStyle = rgba(col.b, 0.95);
+          ctx.beginPath(); ctx.arc(t.x, t.y, 2.0, 0, 7); ctx.fill();
+          tips.splice(i, 1);
+          if (t.depth < 7 && tips.length < 80) {
+            var n = Math.random() < 0.5 ? 2 : 3;
+            for (var k = 0; k < n; k++) {
+              var spread = (k - (n - 1) / 2) * 0.4 + (Math.random() - 0.5) * 0.15;
+              tips.push({ x: t.x, y: t.y, ang: t.ang + spread, rem: 24 + Math.random() * 40, depth: t.depth + 1 });
+            }
+          }
+        }
+      }
+      // No reseed: when the tree has fully run off-screen, tips stays empty and
+      // the loop below winds down — so it fires only once per load.
+    }
+
+    var tail = -1;   // once the tree is done, count down extra frames to let the
+                     // remaining trails fade out, then stop entirely.
+    function frame() {
+      loomStep();
+      if (tips.length === 0) {
+        if (tail < 0) tail = 600;
+        if (--tail <= 0) { stop(); return; }
+      }
+      raf = requestAnimationFrame(frame);
+    }
+    function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } }
+
+    // Fire once on load.
+    resize();
+    ctx.clearRect(0, 0, W, H);
+    seedLoom();
+    if (reduced) { for (var i = 0; i < 240; i++) loomStep(); }  // single still frame
+    else raf = requestAnimationFrame(frame);
+  })();
+  </script>
+</section>
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}New API key — ACS Infra{% endblock %}
+{% block content %}
+
+{% if via_approval %}
+<h1>Welcome — your account is ready</h1>
+
+<p class="notice" style="margin-bottom: 1.5rem;">
+  We created an initial API key for you below. <strong>Copy it now</strong> — it
+  won't be shown again.
+</p>
+{% else %}
+<h1>API key created</h1>
+
+<p class="notice" style="margin-bottom: 1.5rem;">
+  <strong>Copy this key now</strong> — it won't be shown again.
+</p>
+{% endif %}
+
+<p style="margin-bottom: 0.4rem;">Key (paste into <code>ACS_API_KEY</code>):</p>
+{# Select-all <pre> is the no-JS fallback; the Copy button enhances it. #}
+<div style="display: flex; align-items: flex-start; gap: 0.5rem;">
+  <pre id="key-value" style="user-select: all; word-break: break-all; white-space: pre-wrap; flex: 1; margin: 0;"><code>{{ plaintext_key }}</code></pre>
+  <button type="button" class="secondary" id="key-copy-btn" style="flex-shrink: 0;">Copy</button>
+</div>
+<p class="muted" style="margin-top: 0.6rem; font-size: 0.88rem;">
+  Lost it? You can revoke this key and create a new one anytime from your
+  <a href="/dashboard">dashboard</a>.
+</p>
+<script>
+  (function () {
+    var btn = document.getElementById('key-copy-btn');
+    var pre = document.getElementById('key-value');
+    if (!btn || !pre || !navigator.clipboard) { if (btn) btn.style.display = 'none'; return; }
+    btn.addEventListener('click', function () {
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        var prev = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        setTimeout(function () { btn.textContent = prev; }, 1500);
+      }).catch(function () { btn.textContent = 'Press ⌘C'; });
+    });
+  })();
+</script>
+
+<div class="card" style="margin-top: 1.75rem;">
+  <dl class="fields">
+    <dt>Prefix</dt><dd><code>{{ key_prefix }}</code></dd>
+    <dt>Name</dt>
+    <dd>
+      {% if key_id %}
+      {# Same inline rename as the dashboard: name + pen, swaps to input + check/X. #}
+      <span class="key-rename" data-name="{{ name or '' }}">
+        <span class="key-rename-view">
+          <span class="key-rename-text">{{ name or "—" }}</span>
+          <button type="button" class="ghost icon-btn key-rename-edit" aria-label="Rename key" title="Rename">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </button>
+        </span>
+        <form action="/me/keys/{{ key_id }}/rename" method="post" class="key-rename-form" hidden>
+          <input type="text" name="name" value="{{ name or '' }}" maxlength="64"
+                 placeholder="key name" class="key-rename-input" style="margin: 0; min-width: 140px;">
+          <button type="submit" class="ghost icon-btn" aria-label="Save name" title="Save">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button type="button" class="ghost icon-btn key-rename-cancel" aria-label="Cancel rename" title="Cancel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </form>
+      </span>
+      {% else %}
+      {{ name or "—" }}
+      {% endif %}
+    </dd>
+    <dt>Monthly budget</dt>
+    <dd>
+      {% if monthly_token_budget == 0 %}
+        Unbounded <span class="muted">(account limit still applies)</span>
+      {% else %}
+        {{ "{:,}".format(monthly_token_budget) }} tokens
+      {% endif %}
+    </dd>
+  </dl>
+</div>
+
+{# The key reveal is the highest-attention screen a new user ever sees, so the
+   Discord ask lives here rather than below the fold on the dashboard
+   (ACS-310). Only for people who haven't linked yet. #}
+{% if via_approval and discord_oauth_enabled and not user.discord_username %}
+<div class="card" style="margin-top: 1.75rem;">
+  <h2 style="font-size: 1.15rem; margin-top: 0;">One more thing — join the community</h2>
+  <p>
+    Our beta community lives on Discord: model updates, feedback threads, and
+    what other researchers are running. Connect your account and we'll add you
+    to the server automatically.
+  </p>
+  {# New tab: this key is shown once, so never navigate away from it. #}
+  <a class="btn" href="/discord/connect" target="_blank" rel="noopener">Connect Discord</a>
+  <p class="muted" style="font-size: 0.85rem; margin-bottom: 0;">
+    You can also do this later from your dashboard.
+  </p>
+</div>
+{% endif %}
+
+<div class="button-row">
+  {% if via_approval %}
+  {# Brand-new user who's never seen the app — point them at where to start,
+     not "back" to a dashboard they've never visited (ACS-99 / Annie). #}
+  <a class="btn" href="/workbench">Open the workbench</a>
+  <a class="btn secondary" href="/tutorial">Read the tutorial</a>
+  <a class="btn secondary" href="/dashboard">Go to dashboard</a>
+  {% else %}
+  <a class="btn" href="/dashboard">Back to dashboard</a>
+  <a class="btn secondary" href="/tutorial">Read the tutorial</a>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Emails — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .stats-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .stat-card {
+    flex: 1 1 7rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.9rem 1.1rem;
+    box-shadow: var(--shadow);
+  }
+  .stat-card .stat-num { font-size: 1.5rem; font-weight: 600; font-family: var(--font-serif); color: var(--fg); }
+  .stat-card .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .filter-group { margin-bottom: 1.25rem; }
+  .filter-group .filter-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-right: 0.5rem; }
+  .filter-pills { display: inline-flex; gap: 0.4rem; flex-wrap: wrap; }
+  a.filter-pill {
+    display: inline-block;
+    padding: 0.2rem 0.7rem;
+    font-size: 0.82rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    color: var(--fg-soft);
+    background: var(--surface);
+  }
+  a.filter-pill:hover { background: var(--surface-alt); text-decoration: none; color: var(--fg); }
+  a.filter-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .email-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .email-table th, .email-table td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .email-table th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+  .email-table tr:hover td { background: var(--surface-alt); }
+  .email-table .subj { color: var(--fg); }
+  .email-table .subj a { color: inherit; }
+  .email-table .when { color: var(--muted); white-space: nowrap; font-size: 0.82rem; }
+  .email-table .to { color: var(--fg-soft); word-break: break-all; }
+
+  .st-sent { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .st-skipped { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .st-failed { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  .ev { font-size: 0.8rem; color: var(--fg-soft); }
+  .ev-bounced, .ev-complained { color: var(--error); }
+  .ev-delivered { color: var(--success); }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Emails</h1>
+<p class="lead" style="margin-bottom: 2rem;">
+  Audit of email the app sent or attempted (approvals, rejections, bulk sends).
+  Delivery status is updated by Resend webhooks.
+  <a href="/admin/emails/bulk">Bulk email &rarr;</a>
+</p>
+
+<div class="stats-row">
+  <div class="stat-card"><div class="stat-num">{{ stats.total }}</div><div class="stat-label">Total</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.sent }}</div><div class="stat-label">Sent</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.delivered }}</div><div class="stat-label">Delivered</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.bounced }}</div><div class="stat-label">Bounced</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.skipped }}</div><div class="stat-label">Skipped</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.failed }}</div><div class="stat-label">Failed</div></div>
+</div>
+
+<div class="filter-group">
+  <span class="filter-label">Status</span>
+  <span class="filter-pills">
+    {% for s in ["all", "sent", "skipped", "failed"] %}
+      <a class="filter-pill {{ 'active' if status_filter == s else '' }}"
+         href="?status={{ s }}&kind={{ kind_filter }}">{{ s }}</a>
+    {% endfor %}
+  </span>
+</div>
+<div class="filter-group">
+  <span class="filter-label">Kind</span>
+  <span class="filter-pills">
+    <a class="filter-pill {{ 'active' if kind_filter == 'all' else '' }}"
+       href="?status={{ status_filter }}&kind=all">all</a>
+    {% for k in kinds %}
+      <a class="filter-pill {{ 'active' if kind_filter == k else '' }}"
+         href="?status={{ status_filter }}&kind={{ k }}">{{ k }}</a>
+    {% endfor %}
+  </span>
+</div>
+
+{% if truncated %}
+  <p class="muted" style="margin-bottom:1rem;">Showing the latest {{ list_limit }} emails (history is longer).</p>
+{% endif %}
+
+{% if items %}
+<table class="email-table">
+  <thead>
+    <tr><th>When</th><th>Kind</th><th>Status</th><th>To</th><th>Subject</th><th>Delivery</th></tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    {% set r = item.row %}
+    <tr>
+      <td class="when">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ r.kind }}</td>
+      <td>
+        <span class="pill st-{{ r.send_status }}">{{ r.send_status }}</span>
+        {% if r.skip_reason %}<div class="muted" style="font-size:0.75rem;">{{ r.skip_reason }}</div>{% endif %}
+      </td>
+      <td class="to">{{ r.to_email }}{% if item.recipient_email and item.recipient_email != r.to_email %} <span class="muted">({{ item.recipient_email }})</span>{% endif %}</td>
+      <td class="subj"><a href="/admin/emails/{{ r.id }}">{{ r.subject }}</a></td>
+      <td>
+        {% if r.last_event %}
+          <span class="ev ev-{{ r.last_event.split('.')[-1] }}">{{ r.last_event }}</span>
+          {% if r.last_event_at %}<div class="muted" style="font-size:0.72rem;">{{ r.last_event_at.strftime('%Y-%m-%d %H:%M') }}</div>{% endif %}
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <p class="muted">No emails match the current filter.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,498 @@
+{% extends "base.html" %}
+{% block title %}Usage — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  /* --- stat cards --------------------------------------------------------- */
+  .usage-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.85rem;
+    margin-bottom: 1.25rem;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.15rem;
+    box-shadow: var(--shadow);
+  }
+  .stat-card .stat-label {
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 500;
+    margin: 0 0 0.35rem;
+  }
+  .stat-card .stat-num {
+    font-family: var(--font-serif);
+    font-size: 1.7rem;
+    font-weight: 600;
+    color: var(--fg);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+  .stat-card.accent .stat-num { color: var(--accent); }
+  .stat-card .stat-sub { color: var(--muted); font-size: 0.8rem; margin-top: 0.25rem; }
+
+  /* --- budget progress bars ----------------------------------------------- */
+  .budgets { display: grid; gap: 1.1rem; }
+  .budget-row .budget-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    font-size: 0.88rem;
+    margin-bottom: 0.4rem;
+  }
+  .budget-row .budget-name { font-weight: 500; color: var(--fg); }
+  .budget-row .budget-pct { font-family: var(--font-mono); font-size: 0.82rem; color: var(--muted); }
+  .budget-row .budget-pct.warn { color: var(--accent-2); }
+  .budget-row .budget-pct.over { color: var(--error); }
+  .budget-track {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    height: 0.6rem;
+    overflow: hidden;
+  }
+  .budget-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+  .budget-fill.warn { background: var(--accent-2); }
+  .budget-fill.over { background: var(--error); }
+  .budget-meta {
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-top: 0.35rem;
+    font-family: var(--font-mono);
+  }
+
+  /* --- chart -------------------------------------------------------------- */
+  .chart-card { position: relative; }
+  .chart-legend {
+    display: flex;
+    gap: 1.1rem;
+    flex-wrap: wrap;
+    font-size: 0.82rem;
+    color: var(--fg-soft);
+    margin-bottom: 0.75rem;
+  }
+  .chart-legend .key { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .chart-legend .swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; display: inline-block; }
+  /* Colour-blind-safe pair (Wong): input blue, output orange — never red/green. */
+  .swatch.input { background: var(--chart-input); }
+  .swatch.output { background: var(--chart-output); }
+  :root { --chart-input: #1d7a93; --chart-output: #cc6620; }
+  [data-theme="dark"] { --chart-input: #3aa9c2; --chart-output: #e87f2c; }
+
+  .chart-wrap { overflow-x: auto; }
+  .chart-svg { display: block; max-width: 760px; width: 100%; }
+  .chart-grid { stroke: var(--border); stroke-width: 1; }
+  .chart-axis { font-size: 11px; fill: var(--muted); font-family: var(--font-mono); }
+  .chart-bar-input { fill: var(--chart-input); }
+  .chart-bar-output { fill: var(--chart-output); }
+  /* The whole day is one focusable/hoverable group; a faint hover plate gives
+     a generous hit area and a visible focus ring for keyboard users. */
+  .chart-day .chart-hit { fill: transparent; }
+  .chart-day:hover .chart-hit,
+  .chart-day:focus-visible .chart-hit { fill: var(--accent-soft); }
+  .chart-day:focus { outline: none; }
+  .chart-day:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-radius: 2px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .chart-bar-input, .chart-bar-output { transition: opacity 120ms; }
+  }
+
+  /* Floating tooltip (HTML, not SVG <title>, so it works on keyboard focus
+     and reads reliably). Positioned via JS. */
+  .chart-tip {
+    position: absolute;
+    pointer-events: none;
+    z-index: 20;
+    background: var(--fg);
+    color: var(--bg);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.65rem;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    white-space: nowrap;
+    opacity: 0;
+    transform: translate(-50%, -100%);
+    transition: opacity 100ms;
+  }
+  .chart-tip.show { opacity: 1; }
+  .chart-tip .tip-date { font-weight: 600; margin-bottom: 0.2rem; }
+  .chart-tip .tip-row { display: flex; justify-content: space-between; gap: 0.9rem; font-family: var(--font-mono); }
+  .chart-tip .tip-row .tip-k { color: var(--muted); }
+
+  td.num, th.num { text-align: right; }
+  td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 0.88rem; }
+  .split-cell { white-space: nowrap; }
+  .split-cell .split-sub { color: var(--muted); font-size: 0.78rem; }
+  .chart-table-toggle { margin-top: 0.75rem; }
+  .chart-table-toggle summary { font-size: 0.85rem; color: var(--muted); cursor: pointer; }
+  .chart-table-toggle table { margin-top: 0.6rem; }
+
+  /* --- key filter --------------------------------------------------------- */
+  .key-filter {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    max-width: 100%;
+    margin: -0.4rem 0 1.75rem;
+  }
+  .key-filter label { flex-direction: row; align-items: center; font-weight: 500; }
+  .key-filter select { margin: 0; min-width: 14rem; max-width: 100%; }
+  .key-filter .filter-go { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+  .key-filter .filter-scope { color: var(--muted); font-size: 0.85rem; }
+  .key-filter .filter-scope a { font-weight: 500; }
+</style>
+{% endblock %}
+{% block content %}
+
+<h1>Usage</h1>
+
+{% if not has_keys %}
+<div class="card">
+  <p style="margin: 0 0 0.75rem;">You don't have any API keys yet, so there's no usage to show.</p>
+  <p class="muted" style="margin: 0;">
+    Create a key on your <a href="/dashboard">dashboard</a>, then make your first
+    request — your token usage, budgets, and per-key breakdown will appear here.
+    See the <a href="/tutorial">tutorial</a> for a copy-paste example.
+  </p>
+</div>
+{% else %}
+
+{# ---- key filter ---------------------------------------------------------- #}
+{# Server-rendered filter: a GET form whose <select name="key"> reloads /usage
+   with ?key=<id>. The select auto-submits on change (progressive enhancement);
+   the visible "Apply" button is the no-JS / keyboard fallback so the control
+   works without scripting. Scoping the whole page is done server-side in
+   build_usage_context. #}
+<form class="key-filter" method="get" action="/usage" id="key-filter-form">
+  <label for="key-select">View
+    <select name="key" id="key-select">
+      <option value=""{% if not selected_key_id %} selected{% endif %}>All keys</option>
+      {% for k in key_options %}
+      <option value="{{ k.id }}"{% if k.id == selected_key_id %} selected{% endif %}>
+        {{ k.name or "Unnamed key" }} ({{ k.key_prefix }})
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit" class="secondary filter-go">Apply</button>
+  {% if selected_key_id %}
+  <span class="filter-scope">Scoped to <strong>{{ selected_key_name }}</strong> · <a href="/usage">show all keys</a></span>
+  {% endif %}
+</form>
+
+{# ---- headline stat cards ------------------------------------------------- #}
+<section>
+  <h2>This month <span class="muted" style="font-weight: 400; font-size: 0.7em;">since {{ period_start.strftime('%b %-d, %Y') }}</span></h2>
+  <div class="usage-stats">
+    <div class="stat-card accent">
+      <p class="stat-label">Total tokens</p>
+      <div class="stat-num">{{ "{:,}".format(month_total) }}</div>
+    </div>
+    <div class="stat-card">
+      <p class="stat-label">Input tokens</p>
+      <div class="stat-num">{{ "{:,}".format(month_input) }}</div>
+      <div class="stat-sub">{{ "%.0f%%" | format(100 * month_input / month_total) if month_total else "0%" }} of total</div>
+    </div>
+    <div class="stat-card">
+      <p class="stat-label">Output tokens</p>
+      <div class="stat-num">{{ "{:,}".format(month_output) }}</div>
+      <div class="stat-sub">{{ "%.0f%%" | format(100 * month_output / month_total) if month_total else "0%" }} of total</div>
+    </div>
+    <div class="stat-card">
+      <p class="stat-label">Requests</p>
+      <div class="stat-num">{{ "{:,}".format(month_requests) }}</div>
+      <div class="stat-sub">{{ "{:,}".format(today_total) }} tokens today</div>
+    </div>
+  </div>
+
+  {% if budgets %}
+  <div class="card">
+    <div class="budgets">
+      {% for b in budgets %}
+      <div class="budget-row">
+        <div class="budget-head">
+          <span class="budget-name">{{ b.label }} budget</span>
+          <span class="budget-pct {{ b.state }}">{{ "%.1f%%" | format(b.pct_label) }}{% if b.state == 'over' %} · over budget{% endif %}</span>
+        </div>
+        <div class="budget-track" role="progressbar"
+             aria-valuenow="{{ b.used }}" aria-valuemin="0" aria-valuemax="{{ b.budget }}"
+             aria-label="{{ b.label }} budget: {{ '{:,}'.format(b.used) }} of {{ '{:,}'.format(b.budget) }} tokens used">
+          <div class="budget-fill {{ b.state }}" style="width: {{ '%.1f' | format(b.pct) }}%;"></div>
+        </div>
+        <p class="budget-meta">
+          {{ "{:,}".format(b.used) }} / {{ "{:,}".format(b.budget) }} tokens
+          · {{ "{:,}".format(b.remaining) }} remaining
+        </p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">No budget caps are configured on your keys — usage is uncapped. Contact <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a> to set limits.</p>
+  {% endif %}
+</section>
+
+{# ---- last-30-days stacked chart ----------------------------------------- #}
+<section>
+  <h2>Last {{ chart_days }} days</h2>
+  <div class="card chart-card">
+    {% if daily_max > 0 %}
+    <div class="chart-legend" aria-hidden="true">
+      <span class="key"><span class="swatch input"></span> Input tokens</span>
+      <span class="key"><span class="swatch output"></span> Output tokens</span>
+    </div>
+    <div class="chart-wrap">
+      {% set chart_w = 760 %}
+      {% set chart_h = 200 %}
+      {% set pad_l = 56 %}
+      {% set pad_b = 22 %}
+      {% set pad_t = 8 %}
+      {% set plot_h = chart_h - pad_b - pad_t %}
+      {% set n = daily_series|length %}
+      {% set slot = (chart_w - pad_l) / n %}
+      {% set bar_w = slot * 0.7 %}
+      {# 4 horizontal gridlines + axis labels at fractions of daily_max. #}
+      <svg class="chart-svg" viewBox="0 0 {{ chart_w }} {{ chart_h }}"
+           role="img" aria-label="Daily token usage for the last {{ chart_days }} days, input and output stacked. A data table follows below.">
+        {% for f in [0, 0.25, 0.5, 0.75, 1.0] %}
+          {% set gy = pad_t + plot_h * (1 - f) %}
+          <line class="chart-grid" x1="{{ pad_l }}" y1="{{ gy }}" x2="{{ chart_w }}" y2="{{ gy }}"></line>
+          <text class="chart-axis" x="{{ pad_l - 6 }}" y="{{ gy + 3 }}" text-anchor="end">{{ "{:,}".format((daily_max * f)|round|int) }}</text>
+        {% endfor %}
+        {% for s in daily_series %}
+          {% set x = pad_l + loop.index0 * slot + (slot - bar_w) / 2 %}
+          {% set in_h = plot_h * (s.input / daily_max) if daily_max > 0 else 0 %}
+          {% set out_h = plot_h * (s.output / daily_max) if daily_max > 0 else 0 %}
+          <g class="chart-day" tabindex="0" role="img"
+             aria-label="{{ s.date.strftime('%b %-d') }}: {{ '{:,}'.format(s.tokens) }} tokens ({{ '{:,}'.format(s.input) }} input, {{ '{:,}'.format(s.output) }} output), {{ '{:,}'.format(s.requests) }} requests"
+             data-date="{{ s.date.strftime('%b %-d, %Y') }}"
+             data-input="{{ '{:,}'.format(s.input) }}"
+             data-output="{{ '{:,}'.format(s.output) }}"
+             data-total="{{ '{:,}'.format(s.tokens) }}"
+             data-requests="{{ '{:,}'.format(s.requests) }}">
+            <rect class="chart-hit" x="{{ pad_l + loop.index0 * slot }}" y="{{ pad_t }}" width="{{ slot }}" height="{{ plot_h }}"></rect>
+            {# output stacked on top of input #}
+            <rect class="chart-bar-output" x="{{ x }}" y="{{ pad_t + plot_h - in_h - out_h }}" width="{{ bar_w }}" height="{{ out_h }}"></rect>
+            <rect class="chart-bar-input" x="{{ x }}" y="{{ pad_t + plot_h - in_h }}" width="{{ bar_w }}" height="{{ in_h }}"></rect>
+          </g>
+        {% endfor %}
+        {# x-axis date ticks: first, middle, last #}
+        <text class="chart-axis" x="{{ pad_l }}" y="{{ chart_h - 6 }}">{{ daily_series[0].date.strftime('%b %-d') }}</text>
+        <text class="chart-axis" x="{{ pad_l + (chart_w - pad_l) / 2 }}" y="{{ chart_h - 6 }}" text-anchor="middle">{{ daily_series[n // 2].date.strftime('%b %-d') }}</text>
+        <text class="chart-axis" x="{{ chart_w }}" y="{{ chart_h - 6 }}" text-anchor="end">{{ daily_series[-1].date.strftime('%b %-d') }}</text>
+      </svg>
+    </div>
+    <div class="chart-tip" id="chart-tip" role="tooltip" aria-hidden="true"></div>
+
+    {# Accessible / screen-reader fallback + exact values for everyone. #}
+    <details class="chart-table-toggle">
+      <summary>View as table</summary>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Date</th><th class="num">Input</th><th class="num">Output</th><th class="num">Total</th><th class="num">Requests</th></tr>
+          </thead>
+          <tbody>
+            {% for s in daily_series if s.tokens > 0 %}
+            <tr>
+              <td>{{ s.date.strftime('%Y-%m-%d') }}</td>
+              <td class="num">{{ "{:,}".format(s.input) }}</td>
+              <td class="num">{{ "{:,}".format(s.output) }}</td>
+              <td class="num">{{ "{:,}".format(s.tokens) }}</td>
+              <td class="num">{{ "{:,}".format(s.requests) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% else %}
+    <p class="muted" style="margin: 0;">No usage recorded in the last {{ chart_days }} days.</p>
+    {% endif %}
+  </div>
+</section>
+
+{# ---- per-key breakdown ---------------------------------------------------
+   Always lists every key (the all-keys overview) regardless of the filter, so
+   it doubles as a way to see the other keys and jump to them. #}
+<section>
+  <h2>By key <span class="muted" style="font-weight: 400; font-size: 0.7em;">all keys</span></h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Prefix</th>
+          <th>Name</th>
+          <th class="num">This month <span class="muted" style="font-weight:400;">(in / out)</span></th>
+          <th class="num">Last month</th>
+          <th class="num">Lifetime</th>
+          <th class="num">Per-key monthly budget</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for k in per_key %}
+        <tr{% if k.id == selected_key_id %} style="background: var(--accent-soft);"{% endif %}>
+          <td>
+            {% if k.id == selected_key_id %}
+              <code>{{ k.key_prefix }}</code>
+            {% else %}
+              <a href="/usage?key={{ k.id }}" title="View usage for this key only"><code>{{ k.key_prefix }}</code></a>
+            {% endif %}
+          </td>
+          <td>{{ k.name or "—" }}</td>
+          <td class="num split-cell">
+            {{ "{:,}".format(k.this_month) }}
+            <div class="split-sub">{{ "{:,}".format(k.this_month_input) }} / {{ "{:,}".format(k.this_month_output) }}</div>
+          </td>
+          <td class="num">{{ "{:,}".format(k.last_month) }}</td>
+          <td class="num">{{ "{:,}".format(k.lifetime) }}</td>
+          <td class="num">{% if k.monthly_budget %}{{ "{:,}".format(k.monthly_budget) }}{% else %}<span class="muted">none</span>{% endif %}</td>
+          <td>
+            {% if k.revoked %}
+              <span class="pill revoked">revoked</span>
+            {% elif k.disabled %}
+              <span class="pill paused">paused</span>
+            {% else %}
+              <span class="pill active">active</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ---- per-endpoint breakdown ---------------------------------------------- #}
+<section>
+  <h2>By endpoint (this month)</h2>
+  {% if per_endpoint %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Endpoint</th>
+          <th class="num">Requests</th>
+          <th class="num">Input</th>
+          <th class="num">Output</th>
+          <th class="num">Tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in per_endpoint %}
+        <tr>
+          <td><code>{{ e.endpoint }}</code></td>
+          <td class="num">{{ "{:,}".format(e.requests) }}</td>
+          <td class="num">{{ "{:,}".format(e.input) }}</td>
+          <td class="num">{{ "{:,}".format(e.output) }}</td>
+          <td class="num">{{ "{:,}".format(e.tokens) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No requests this month yet.</p>
+  {% endif %}
+</section>
+
+{# ---- recent requests ----------------------------------------------------- #}
+<section>
+  <h2>Recent requests</h2>
+  {% if recent_requests %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Key</th>
+          <th>Endpoint</th>
+          <th>Model</th>
+          <th class="num">Input</th>
+          <th class="num">Output</th>
+          <th class="num">Latency</th>
+          <th class="num">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recent_requests %}
+        <tr>
+          <td>{{ r.ts.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td><code>{{ r.key_prefix }}</code></td>
+          <td><code>{{ r.endpoint }}</code></td>
+          <td>{{ r.model or "—" }}</td>
+          <td class="num">{{ "{:,}".format(r.input) }}</td>
+          <td class="num">{{ "{:,}".format(r.output) }}</td>
+          <td class="num">{% if r.latency_ms is not none %}{{ "{:,}".format(r.latency_ms) }} ms{% else %}—{% endif %}</td>
+          <td class="num">{{ r.status }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No requests recorded.</p>
+  {% endif %}
+</section>
+
+<script>
+  // Accessible chart tooltip: shows exact per-day values on hover AND keyboard
+  // focus (SVG <title> only works on hover and reads unreliably). Each day is a
+  // focusable <g> with a full aria-label, so screen readers get the values
+  // regardless; this floating div is the sighted-user affordance on top.
+  (function () {
+    var tip = document.getElementById('chart-tip');
+    var svg = document.querySelector('.chart-svg');
+    if (!tip || !svg) return;
+    var card = svg.closest('.chart-card');
+
+    function fmtTip(g) {
+      return '<div class="tip-date">' + g.dataset.date + '</div>'
+        + '<div class="tip-row"><span class="tip-k">Input</span><span>' + g.dataset.input + '</span></div>'
+        + '<div class="tip-row"><span class="tip-k">Output</span><span>' + g.dataset.output + '</span></div>'
+        + '<div class="tip-row"><span class="tip-k">Total</span><span>' + g.dataset.total + '</span></div>'
+        + '<div class="tip-row"><span class="tip-k">Requests</span><span>' + g.dataset.requests + '</span></div>';
+    }
+    function show(g) {
+      tip.innerHTML = fmtTip(g);
+      // Position above the hovered bar group, relative to the card.
+      var gb = g.getBoundingClientRect();
+      var cb = card.getBoundingClientRect();
+      tip.style.left = (gb.left - cb.left + gb.width / 2) + 'px';
+      tip.style.top = (gb.top - cb.top - 8) + 'px';
+      tip.classList.add('show');
+    }
+    function hide() { tip.classList.remove('show'); }
+
+    Array.prototype.forEach.call(svg.querySelectorAll('.chart-day'), function (g) {
+      g.addEventListener('mouseenter', function () { show(g); });
+      g.addEventListener('mouseleave', hide);
+      g.addEventListener('focus', function () { show(g); });
+      g.addEventListener('blur', hide);
+    });
+    // Dismissible per the WAI-ARIA tooltip pattern.
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+  })();
+
+  // Key filter: auto-submit the GET form when the selection changes, so a
+  // mouse user doesn't need the extra "Apply" click. The button remains as the
+  // keyboard / no-JS fallback (and keyboard users who change the select with
+  // arrow keys still get auto-submit on change).
+  (function () {
+    var sel = document.getElementById('key-select');
+    var form = document.getElementById('key-filter-form');
+    if (!sel || !form) return;
+    sel.addEventListener('change', function () { form.submit(); });
+  })();
+</script>
+
+{% endif %}
+{% endblock %}

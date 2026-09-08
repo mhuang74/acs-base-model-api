@@ -1,0 +1,35 @@
+{% extends "tutorial_layout.html" %}
+{# Per-page template: drop the rendered markdown body and (on /tutorial only)
+   the legacy-fragment redirect script.
+
+   Inputs (from the route):
+     page                 — RenderedDoc
+     nav                  — list[NavEntry] (consumed by the included sidebar)
+     current_slug         — str (consumed by the included sidebar)
+     legacy_fragment_map  — dict[str, str] | None   set ONLY by /tutorial
+                            (the Overview route); when present we emit the
+                            redirect <script> before first paint.
+#}
+
+{% block docs_head %}
+{% if legacy_fragment_map %}
+{# Pre-paint redirect for old in-page anchors. The single-page /tutorial
+   used #logprobs, #prompt-logprobs, etc.; those URLs may be linked from
+   wikis / Slack / browser bookmarks. We rewrite them to the new dedicated
+   pages without a server round-trip. Runs BEFORE the body parses, so the
+   user never sees an unrelated flash of Overview content first. #}
+<script>
+(function(){
+  var map = {{ legacy_fragment_map | tojson }};
+  if (location.hash) {
+    var dest = map[location.hash.slice(1)];
+    if (dest) location.replace(dest);
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}
+
+{% block docs_main %}
+{{ page.body_html | safe }}
+{% endblock %}

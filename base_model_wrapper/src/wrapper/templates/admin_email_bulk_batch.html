@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Bulk batch — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .back-link { display: inline-block; margin-bottom: 1rem; font-size: 0.85rem; }
+  .email-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .email-table th, .email-table td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .email-table th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+  .email-table tr:hover td { background: var(--surface-alt); }
+  .st-pending { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .st-sent { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .st-suppressed, .st-skipped { background: var(--surface-alt); color: var(--muted); border-color: var(--border); }
+  .st-failed { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  .send-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.1rem 1.3rem;
+    box-shadow: var(--shadow);
+    margin: 1.5rem 0 2rem;
+  }
+  .send-panel form { display: inline-block; margin-right: 1.2rem; }
+  .flash-ok { color: var(--success); margin-bottom: 1rem; }
+  .flash-err { color: var(--error); margin-bottom: 1rem; }
+</style>
+{% endblock %}
+{% block content %}
+<a class="back-link" href="/admin/emails/bulk">&larr; Bulk email</a>
+<h1 style="word-break: break-word;">{{ batch.name }}</h1>
+<p class="lead">
+  <span class="pill st-{{ batch.status }}">{{ batch.status }}</span>
+  · {{ items|length }} emails · created {{ batch.created_at.strftime('%Y-%m-%d %H:%M') }} UTC
+  {% if batch.scheduled_at %} · scheduled for {{ batch.scheduled_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}
+  {% if batch.sent_at %} · sent {{ batch.sent_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}
+</p>
+
+{% if flash_message %}<p class="flash-ok">{{ flash_message }}</p>{% endif %}
+{% if flash_error %}<p class="flash-err">{{ flash_error }}</p>{% endif %}
+
+{% if editable %}
+<div class="send-panel">
+  <form method="post" action="/admin/emails/bulk/{{ batch.id }}/send"
+        onsubmit="return confirm('Send this batch now to all pending recipients?');">
+    <input type="hidden" name="send_mode" value="now">
+    <button class="btn" type="submit">Send now</button>
+  </form>
+  <form method="post" action="/admin/emails/bulk/{{ batch.id }}/send">
+    <input type="hidden" name="send_mode" value="schedule">
+    <label>Or schedule (UTC): <input type="datetime-local" name="scheduled_at" required></label>
+    <button class="btn secondary" type="submit">Schedule</button>
+  </form>
+  <form method="post" action="/admin/emails/bulk/{{ batch.id }}/cancel">
+    <button class="btn secondary" type="submit">Cancel batch</button>
+  </form>
+  <p class="muted" style="font-size: 0.82rem; margin-bottom: 0;">
+    Click a subject to preview and edit an email before sending. Suppressed rows
+    (recipient unsubscribed) are skipped automatically.
+  </p>
+</div>
+{% endif %}
+
+<table class="email-table">
+  <thead><tr><th>To</th><th>From</th><th>Subject</th><th>Status</th><th>Audit</th></tr></thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ item.to_email }}{% if item.cc %}<div class="muted" style="font-size:0.75rem;">cc: {{ item.cc }}</div>{% endif %}{% if item.bcc %}<div class="muted" style="font-size:0.75rem;">bcc: {{ item.bcc }}</div>{% endif %}</td>
+      <td>{{ item.from_email }}{% if item.reply_to %}<div class="muted" style="font-size:0.75rem;">reply-to: {{ item.reply_to }}</div>{% endif %}</td>
+      <td><a href="/admin/emails/bulk/{{ batch.id }}/items/{{ item.id }}">{{ item.subject }}</a></td>
+      <td>
+        <span class="pill st-{{ item.status }}">{{ item.status }}</span>
+        {% if item.error %}<div class="muted" style="font-size:0.75rem; color: var(--error);">{{ item.error[:120] }}</div>{% endif %}
+      </td>
+      <td>{% if item.email_log_id %}<a href="/admin/emails/{{ item.email_log_id }}">log</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

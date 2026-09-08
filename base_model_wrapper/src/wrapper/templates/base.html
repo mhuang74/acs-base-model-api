@@ -1,0 +1,1399 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ACS Infra{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    // Set theme before paint to avoid FOUC.
+    (function () {
+      try {
+        var stored = localStorage.getItem('theme');
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      /* Palette: cyan primary + orange secondary on neutral paper */
+      --bg: #ffffff;
+      --surface: #ffffff;
+      --surface-alt: #f4f4f4;
+      --fg: #0a0a0a;
+      --fg-soft: #2a2a2a;
+      --muted: #6a6a6a;
+      --border: #e6e6e6;
+      --border-strong: #cccccc;
+      --accent: #1d7a93;
+      --accent-hover: #155f73;
+      --accent-soft: rgba(29, 122, 147, 0.10);
+      --accent-2: #cc6620;
+      --accent-2-hover: #b35718;
+      --error: #b3261e;
+      --error-bg: #fbeeec;
+      --error-border: #e9c8c3;
+      --success: #2e6a47;
+      --success-bg: #ecf3ee;
+      --success-border: #c8dccf;
+      --warn-bg: #e8f2f5;
+      --warn-border: #b8d2da;
+      --shadow: 0 1px 2px rgba(31, 30, 29, 0.04);
+      --radius: 6px;
+      --radius-lg: 10px;
+
+      --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+      --font-serif: "Source Serif 4", "Charter", "Iowan Old Style", Georgia, serif;
+      --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+    }
+
+    [data-theme="dark"] {
+      --bg: #0a0a0a;
+      --surface: #161616;
+      --surface-alt: #1d1d1d;
+      --fg: #f0f0f0;
+      --fg-soft: #c8c8c8;
+      --muted: #7c7c7c;
+      --border: #262626;
+      --border-strong: #383838;
+      --accent: #3aa9c2;
+      --accent-hover: #4fbcd4;
+      --accent-soft: rgba(58, 169, 194, 0.14);
+      --accent-2: #e87f2c;
+      --accent-2-hover: #f08f3e;
+      --error: #e57368;
+      --error-bg: #3a2522;
+      --error-border: #553530;
+      --success: #7fb98a;
+      --success-bg: #1f2f24;
+      --success-border: #345040;
+      --warn-bg: #112229;
+      --warn-border: #1f3a45;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      line-height: 1.6;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    h1, h2, h3, h4 {
+      font-family: var(--font-serif);
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--fg);
+      line-height: 1.25;
+    }
+    h1 { font-size: 2rem; margin: 0 0 1.25rem; letter-spacing: -0.02em; }
+    h2 { font-size: 1.3rem; margin: 0 0 0.75rem; }
+    h3 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+
+    p { margin: 0 0 1rem; color: var(--fg-soft); }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+    /* Header */
+    header.site-header {
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.75rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    /* Brand on the left; everything after it pushed to the right.
+       `margin-left: auto` on the next non-hidden item achieves the
+       previous `justify-content: space-between` effect without spreading
+       the theme toggle into the middle of the header. The nav sits left
+       of the theme toggle visually (matching the original); we use flex
+       `order` to override DOM order. */
+    header.site-header > nav { margin-left: auto; order: 1; }
+    header.site-header > .theme-toggle { order: 2; }
+    header.site-header .brand {
+      font-family: var(--font-serif);
+      font-weight: 600;
+      font-size: 1.05rem;
+      color: var(--fg);
+      letter-spacing: -0.01em;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      flex-shrink: 0;
+    }
+    header.site-header .brand:hover { text-decoration: none; }
+    .beta-badge {
+      display: inline-block;
+      font-family: var(--font-sans);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: lowercase;
+      color: var(--accent);
+      background: none;
+      border: 1px solid var(--accent);
+      padding: 0.04rem 0.3rem;
+      border-radius: 6px;
+      margin-left: 0;
+      vertical-align: baseline;
+      position: relative;
+      top: -0.55em;
+      left: -0.9em;
+      transform: rotate(20deg);
+      transform-origin: center;
+      line-height: 1;
+    }
+    header.site-header nav {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    header.site-header nav a {
+      color: var(--muted);
+      font-size: 0.92rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: var(--radius);
+      transition: color 120ms, background 120ms;
+    }
+    header.site-header nav a:hover {
+      color: var(--fg);
+      background: var(--surface-alt);
+      text-decoration: none;
+    }
+    /* Current page: bold + tinted so testers can see where they are. */
+    header.site-header nav a.active,
+    header.site-header nav .nav-dropdown-toggle.active {
+      color: var(--fg);
+      background: var(--surface-alt);
+      font-weight: 600;
+    }
+    .nav-divider {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+      margin: 0 0.35rem;
+    }
+    .logout-btn {
+      background: none;
+      border: 0;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.92rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    .logout-btn:hover { color: var(--fg); background: var(--surface-alt); }
+    /* Logout: icon + email inline (the word "Logout" is replaced by the icon). */
+    .logout-btn { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .logout-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .logout-btn .logout-email { color: var(--muted); }
+
+    /* Feedback: accent-outlined button that fills on hover (sits next to Tutorial). */
+    .nav-feedback-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: var(--accent);
+      background: transparent;
+      border: 1px solid var(--accent);
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 0.35rem 0.7rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 120ms, color 120ms;
+    }
+    .nav-feedback-btn:hover { background: var(--accent); color: #fff; }
+    .nav-feedback-btn svg { width: 15px; height: 15px; }
+
+    /* Admin dropdown (click to open; submenu of admin subpages). */
+    .nav-dropdown { position: relative; display: inline-flex; }
+    .nav-dropdown-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      color: var(--muted);
+      background: none;
+      border: 0;
+      font: inherit;
+      font-size: 0.92rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: color 120ms, background 120ms;
+    }
+    .nav-dropdown-toggle:hover,
+    .nav-dropdown.open .nav-dropdown-toggle { color: var(--fg); background: var(--surface-alt); }
+    .nav-dropdown-toggle > svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .nav-dropdown-toggle .chev { width: 13px; height: 13px; opacity: 0.75; transition: transform 120ms; }
+    .nav-dropdown.open .nav-dropdown-toggle .chev { transform: rotate(180deg); }
+    .nav-dropdown-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      min-width: 150px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 0.3rem;
+      display: none;
+      flex-direction: column;
+      z-index: 60;
+    }
+    .nav-dropdown.open .nav-dropdown-menu { display: flex; }
+    /* Desktop (hover-capable pointers): reveal the submenu on hover, since the
+       "Admin" toggle is now a link to /admin and clicking it navigates instead
+       of toggling. On touch/mobile the toggle just navigates to the /admin menu
+       page, which lists every subpage. */
+    @media (hover: hover) and (pointer: fine) {
+      .nav-dropdown::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        right: 0;
+        width: max(100%, 150px);
+        height: 4px;
+        display: none;
+        z-index: 59;
+      }
+      .nav-dropdown:hover::after { display: block; }
+      .nav-dropdown:hover .nav-dropdown-menu { display: flex; }
+      .nav-dropdown:hover .nav-dropdown-toggle .chev { transform: rotate(180deg); }
+    }
+    .nav-dropdown-menu a {
+      padding: 0.5rem 0.7rem;
+      border-radius: var(--radius);
+      color: var(--fg-soft);
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+    .nav-dropdown-menu a:hover { background: var(--surface-alt); color: var(--fg); text-decoration: none; }
+
+    .theme-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .theme-toggle:hover { color: var(--fg); border-color: var(--border-strong); background: var(--surface-alt); }
+    .theme-toggle svg { width: 16px; height: 16px; }
+    .theme-toggle .icon-sun { display: none; }
+    [data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+    [data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+
+    /* Hamburger menu (mobile only). Uses the CSS-only checkbox hack:
+       the hidden checkbox toggles the menu via :checked + sibling selectors,
+       so no JS is needed for open/close. */
+    .nav-toggle {
+      /* Visually hidden but kept in the layout-flow position; we use
+         position:absolute + clip so screen-readers can still focus it
+         if needed but it doesn't occupy space. */
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      border: 0;
+    }
+    .nav-toggle-label {
+      display: none;  /* hidden on desktop, shown via media query */
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      line-height: 1;
+      user-select: none;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .nav-toggle-label:hover { color: var(--fg); border-color: var(--border-strong); background: var(--surface-alt); }
+    .nav-toggle-label .icon-close { display: none; }
+    .nav-toggle:checked ~ .nav-toggle-label .icon-open { display: none; }
+    .nav-toggle:checked ~ .nav-toggle-label .icon-close { display: inline; }
+
+    /* Main */
+    main {
+      max-width: 980px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 3rem 1.75rem 4rem;
+      flex: 1;
+    }
+
+    /* Forms */
+    form { display: flex; flex-direction: column; gap: 0.9rem; max-width: 420px; }
+    label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.9rem; color: var(--fg-soft); font-weight: 500; }
+    input[type=email], input[type=password], input[type=text], input[type=number], textarea, select {
+      padding: 0.55rem 0.7rem;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      font: inherit;
+      font-size: 0.95rem;
+      background: var(--surface);
+      color: var(--fg);
+      transition: border-color 120ms, box-shadow 120ms;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    textarea { resize: vertical; }
+
+    button, .btn {
+      padding: 0.55rem 1.1rem;
+      background: var(--accent);
+      color: #fff;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      font: inherit;
+      font-size: 0.92rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 120ms, border-color 120ms, transform 60ms;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      line-height: 1.2;
+    }
+    button:hover, .btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); text-decoration: none; color: #fff; }
+    button:active, .btn:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    button.secondary, .btn.secondary {
+      background: var(--surface);
+      color: var(--fg-soft);
+      border: 1px solid var(--border-strong);
+    }
+    button.secondary:hover, .btn.secondary:hover {
+      background: var(--surface-alt);
+      color: var(--fg);
+      border-color: var(--border-strong);
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid transparent;
+    }
+    button.ghost:hover { background: var(--surface-alt); color: var(--fg); border-color: var(--border); }
+
+    button.small {
+      padding: 0.3rem 0.65rem;
+      font-size: 0.82rem;
+    }
+
+    button.danger, .btn.danger {
+      background: var(--error);
+      border: 1px solid var(--error);
+      color: #fff;
+    }
+    button.danger:hover, .btn.danger:hover { background: var(--error); border-color: var(--error); filter: brightness(0.92); color: #fff; }
+    /* Small icon-only action buttons (trash / pause / resume in key tables). */
+    button.icon-btn {
+      min-height: 32px; padding: 0.3rem 0.5rem;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    button.icon-btn svg { width: 15px; height: 15px; }
+
+    .button-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 1.5rem; }
+
+    /* Messages */
+    .error {
+      color: var(--error);
+      background: var(--error-bg);
+      padding: 0.65rem 0.9rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--error-border);
+      font-size: 0.92rem;
+    }
+    .success {
+      color: var(--success);
+      background: var(--success-bg);
+      padding: 0.65rem 0.9rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--success-border);
+      font-size: 0.92rem;
+    }
+    .notice {
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      color: var(--fg-soft);
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius);
+      font-size: 0.92rem;
+    }
+    .muted { color: var(--muted); font-size: 0.9em; }
+
+    /* Cards / sections */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+    section { margin-bottom: 2.5rem; }
+    section:last-child { margin-bottom: 0; }
+
+    /* Inline code & pre */
+    code {
+      background: var(--surface-alt);
+      padding: 0.12em 0.4em;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.88em;
+      color: var(--fg);
+      border: 1px solid var(--border);
+    }
+    pre {
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      padding: 0.85rem 1rem;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.55;
+      color: var(--fg);
+    }
+    pre code { background: transparent; border: 0; padding: 0; font-size: inherit; }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+    table th {
+      text-align: left;
+      font-weight: 500;
+      color: var(--muted);
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid var(--border-strong);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    table td {
+      padding: 0.65rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--fg-soft);
+      vertical-align: middle;
+    }
+    table tbody tr:last-child td { border-bottom: 0; }
+    table tbody tr:hover { background: var(--surface-alt); }
+
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Status pills */
+    .pill {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      font-size: 0.78rem;
+      border-radius: 999px;
+      font-weight: 500;
+      line-height: 1.5;
+      border: 1px solid transparent;
+    }
+    .pill.active { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+    .pill.revoked { background: var(--surface-alt); color: var(--muted); border-color: var(--border); }
+    /* Paused is a neutral/dormant state, not a warning — reuse the muted surface. */
+    .pill.paused { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+
+    /* Definition list */
+    dl.fields {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.55rem 1.25rem;
+      margin: 0;
+      font-size: 0.94rem;
+    }
+    dl.fields dt { color: var(--muted); font-weight: 500; }
+    dl.fields dd { margin: 0; color: var(--fg); }
+
+    /* Details/summary */
+    details { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+    details summary { cursor: pointer; padding: 0.7rem 1rem; font-weight: 500; color: var(--fg); list-style: none; }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::before {
+      content: "›";
+      display: inline-block;
+      margin-right: 0.6rem;
+      transition: transform 120ms;
+      color: var(--muted);
+    }
+    details[open] summary::before { transform: rotate(90deg); }
+    details[open] summary { border-bottom: 1px solid var(--border); }
+    details .details-body { padding: 1rem; }
+
+    /* Footer */
+    footer.site-footer {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 2rem 1.5rem 2.5rem;
+      border-top: 1px solid var(--border);
+      margin-top: auto;
+    }
+    footer.site-footer a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--border-strong); }
+    footer.site-footer a:hover { color: var(--fg); }
+
+    /* Hero (index) */
+    .hero-eyebrow {
+      font-size: 0.82rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 500;
+      margin-bottom: 0.75rem;
+    }
+    .lead { font-size: 1.05rem; color: var(--fg-soft); line-height: 1.65; }
+
+    @media (max-width: 768px) {
+      main { padding: 2rem 1.25rem 3rem; }
+      h1 { font-size: 1.65rem; }
+      header.site-header {
+        padding: 0.65rem 0.9rem;
+        gap: 0.5rem;
+        /* Anchors the absolutely-positioned dropdown nav panel. */
+        position: relative;
+      }
+      /* Reset the desktop ordering so DOM order applies: brand,
+         theme-toggle, hamburger label, nav. */
+      header.site-header > nav { margin-left: 0; order: initial; }
+      header.site-header > .theme-toggle { order: initial; margin-left: auto; }
+      /* Show the hamburger button on mobile. */
+      .nav-toggle-label { display: inline-flex; }
+
+      /* Collapsible nav panel: hidden by default, full-width drop-down. */
+      header.site-header nav {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+        padding: 0.5rem 0.75rem;
+        box-shadow: var(--shadow);
+        display: none;
+        z-index: 50;
+      }
+      .nav-toggle:checked ~ nav { display: flex; }
+
+      /* Stretch nav items to fill the panel width. */
+      header.site-header nav a,
+      header.site-header nav form {
+        width: 100%;
+        font-size: 0.95rem;
+      }
+      header.site-header nav a {
+        display: block;
+        text-align: left;
+        padding: 0.7rem 0.75rem;
+        border-radius: var(--radius);
+      }
+      header.site-header nav form { padding: 0; margin: 0; max-width: 100%; }
+      .logout-btn {
+        width: 100%;
+        text-align: left;
+        font-size: 0.95rem;
+        padding: 0.7rem 0.75rem;
+        border-radius: var(--radius);
+      }
+      .nav-divider { display: none; }
+      .logout-btn .logout-email { display: inline; color: var(--muted); font-size: 0.85rem; }
+      /* Feedback button + admin dropdown fill the panel width; the dropdown
+         menu flows inline (static) instead of floating. */
+      header.site-header nav .nav-feedback-btn,
+      header.site-header nav .nav-dropdown,
+      header.site-header nav .nav-dropdown-toggle {
+        width: 100%;
+      }
+      .nav-feedback-btn { justify-content: flex-start; padding: 0.7rem 0.75rem; font-size: 0.95rem; }
+      .nav-dropdown { flex-direction: column; align-items: stretch; }
+      .nav-dropdown-toggle { justify-content: flex-start; padding: 0.7rem 0.75rem; font-size: 0.95rem; }
+      .nav-dropdown-toggle .chev { margin-left: auto; }
+      .nav-dropdown-menu {
+        position: static;
+        border: 0;
+        box-shadow: none;
+        padding: 0 0 0 1.6rem;
+        min-width: 0;
+      }
+      /* Forms in modals etc. should be full-width on mobile. */
+      form { max-width: 100%; }
+      /* Stacked dl.fields so long values can wrap without forcing the dt
+         column to consume half the screen. */
+      dl.fields {
+        grid-template-columns: 1fr;
+        gap: 0.15rem 0;
+      }
+      dl.fields dt { margin-top: 0.4rem; }
+      dl.fields dt:first-of-type { margin-top: 0; }
+    }
+
+    @media (max-width: 480px) {
+      main { padding: 1.5rem 1rem 2.5rem; }
+      h1 { font-size: 1.45rem; }
+      h2 { font-size: 1.15rem; }
+      header.site-header { padding: 0.55rem 0.75rem; }
+      header.site-header .brand { font-size: 0.98rem; }
+      .card { padding: 1.1rem; }
+      /* Tap-friendly buttons. */
+      button, .btn { min-height: 40px; padding: 0.55rem 0.95rem; }
+      button.small, .btn.small { min-height: 32px; padding: 0.3rem 0.65rem; }
+    }
+
+    /* ---- Term-help tooltips (ACS-257) --------------------------------------
+       Plain-English explainers for jargon (sampling params, loom actions).
+       Distinct from the page-local [data-tooltip] action hints: reads
+       `data-help`, waits ~0.7s so it never flashes on pass-through hovers,
+       wraps into a small paragraph box, and marks the term with a dotted
+       underline so newcomers know help is there. Pure CSS, works on any
+       element on any page that extends base.html. */
+    .term-help { position: relative; }
+    /* Subtle dotted underline that firms up to accent on hover — present on
+       every explained term, so it stays quiet enough not to read as noise in
+       dense label grids. */
+    span.term-help {
+      text-decoration: underline dotted 1px;
+      text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent);
+      text-underline-offset: 2px;
+      cursor: help;
+    }
+    span.term-help:hover, span.term-help:focus-visible { text-decoration-color: var(--accent); }
+    .term-help::after {
+      content: attr(data-help);
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      background: var(--fg);
+      color: var(--bg);
+      border-radius: 6px;
+      padding: 0.45rem 0.6rem;
+      font-size: 0.78rem;
+      font-weight: 400;
+      font-family: var(--font-sans);
+      line-height: 1.45;
+      letter-spacing: normal;
+      text-transform: none;
+      white-space: normal;
+      width: max-content;
+      max-width: 17rem;
+      text-align: left;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease 0ms;
+      z-index: 40;
+    }
+    .term-help:hover::after,
+    .term-help:focus-visible::after {
+      opacity: 1;
+      transition-delay: 700ms;
+    }
+    /* Flipped variant (set by the edge-guard JS below the footer) when the
+       left-anchored box would run off the right viewport edge. */
+    .term-help.term-help-flip::after { left: auto; right: 0; }
+  </style>
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">ACS Infra<sup class="beta-badge">beta</sup></a>
+    {# Hidden checkbox toggles the mobile nav via :checked sibling selector.
+       Order: checkbox must precede the things it toggles (nav, label). #}
+    <input type="checkbox" id="nav-toggle" class="nav-toggle" aria-hidden="true" tabindex="-1">
+    {# Theme toggle lives outside nav so it stays visible on mobile when
+       the nav dropdown is collapsed. #}
+    <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+    {# Hamburger label (mobile only). #}
+    <label for="nav-toggle" class="nav-toggle-label" aria-label="Menu" role="button" tabindex="0">
+      <span class="icon-open" aria-hidden="true">&#9776;</span>
+      <span class="icon-close" aria-hidden="true">&times;</span>
+    </label>
+    <nav>
+      {% set _p = request.url.path %}
+      {% if user %}
+        <button type="button" class="nav-feedback-btn" id="fb-feedback-nav" aria-haspopup="dialog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Feedback
+        </button>
+        <a href="/tutorial"{% if _p == '/tutorial' or _p.startswith('/tutorial/') %} class="active"{% endif %}>Tutorial</a>
+        <a href="/workbench"{% if _p == '/workbench' or (_p.startswith('/workbench/') and not _p.endswith('/loom')) %} class="active"{% endif %}>Workbench</a>
+        <a href="/loom"{% if _p == '/loom' or _p.startswith('/loom/') or _p.endswith('/loom') %} class="active"{% endif %}>Loom</a>
+        <a href="/usage"{% if _p == '/usage' %} class="active"{% endif %}>Usage</a>
+        <a href="/dashboard"{% if _p == '/dashboard' %} class="active"{% endif %}>Dashboard</a>
+        {% if user.role == 'admin' %}
+        <div class="nav-dropdown" id="admin-dropdown">
+          <a href="/admin" class="nav-dropdown-toggle{% if _p == '/admin' or _p.startswith('/admin/') %} active{% endif %}" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
+            Admin
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </a>
+          <div class="nav-dropdown-menu" role="menu">
+            <a href="/admin/users" role="menuitem">Users</a>
+            <a href="/admin/models" role="menuitem">Models</a>
+            <a href="/admin/uptime" role="menuitem">Uptime</a>
+            <a href="/admin/feedback" role="menuitem">Feedback</a>
+            <a href="/admin/emails" role="menuitem">Emails</a>
+          </div>
+        </div>
+        {% endif %}
+        <span class="nav-divider" aria-hidden="true"></span>
+        <form action="/logout" method="post" style="display:inline; margin:0;">
+          <button type="submit" class="logout-btn" title="Sign out ({{ user.email }})" aria-label="Sign out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+            <span class="logout-email">{{ user.email }}</span>
+          </button>
+        </form>
+      {% else %}
+        <a href="/tutorial"{% if _p == '/tutorial' or _p.startswith('/tutorial/') %} class="active"{% endif %}>Tutorial</a>
+        {% if request.app.state.settings.signup_enabled %}<a href="/signup"{% if _p == '/signup' %} class="active"{% endif %}>Apply</a>{% endif %}
+        <a href="/login"{% if _p == '/login' %} class="active"{% endif %}>Login</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a>
+    &nbsp;·&nbsp;
+    Hosted by <a href="https://acsresearch.org/" target="_blank" rel="noopener">ACS Research</a>
+  </footer>
+  <script>
+    (function () {
+      var btn = document.getElementById('theme-toggle');
+      if (btn) {
+        btn.addEventListener('click', function () {
+          var cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+          var next = cur === 'dark' ? 'light' : 'dark';
+          document.documentElement.setAttribute('data-theme', next);
+          try { localStorage.setItem('theme', next); } catch (e) {}
+        });
+      }
+
+      // Admin dropdown: the "Admin" toggle is a link to /admin (the admin menu
+      // page). On hover-capable desktops the submenu opens on hover (CSS). On
+      // touch devices, the chevron toggles the submenu open without navigating,
+      // so subpages stay reachable without leaving the current page first.
+      var dd = document.getElementById('admin-dropdown');
+      if (dd) {
+        var ddToggle = dd.querySelector('.nav-dropdown-toggle');
+        var setOpen = function (open) {
+          dd.classList.toggle('open', open);
+          ddToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        };
+        var coarse = window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
+        if (coarse) {
+          ddToggle.addEventListener('click', function (e) {
+            // First tap reveals the submenu; let a second tap follow the link.
+            if (!dd.classList.contains('open')) {
+              e.preventDefault();
+              e.stopPropagation();
+              setOpen(true);
+            }
+          });
+        }
+        document.addEventListener('click', function (e) {
+          if (!dd.contains(e.target)) setOpen(false);
+        });
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') setOpen(false);
+        });
+      }
+    })();
+  </script>
+  {% if user %}
+  {# Floating feedback button + modal. Shown only to logged-in users; posts a
+     multipart FormData to /feedback via fetch. Inline style/script per the
+     app's convention (see theme-toggle above). Themed via the CSS vars. #}
+  <style>
+    .fb-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .fb-overlay.open { display: flex; }
+    .fb-modal {
+      background: var(--surface);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+      width: 100%;
+      max-width: 620px;
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 1.75rem 2rem;
+    }
+    .fb-modal h2 { margin: 0 0 1rem; }
+    .fb-modal form { max-width: 100%; gap: 0.85rem; }
+    .fb-cats { display: flex; gap: 0.5rem; }
+    .fb-cat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.6rem 0.4rem;
+      background: var(--surface);
+      color: var(--fg-soft);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .fb-cat svg { width: 18px; height: 18px; }
+    .fb-cat-label { font-weight: 600; font-size: 0.85rem; }
+    .fb-cat-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.2; }
+    .fb-cat:hover { background: var(--surface-alt); color: var(--fg); }
+    .fb-cat.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .fb-cat.active .fb-cat-desc { color: rgba(255, 255, 255, 0.82); }
+    .fb-cat.active:hover { background: var(--accent-hover); }
+
+    /* Small question/field labels inside the modal + footer hint. */
+    .fb-q { font-size: 0.85rem; font-weight: 500; color: var(--fg-soft); margin: 0; }
+    .fb-hint { font-size: 0.78rem; color: var(--muted); }
+    .fb-actions-btns { display: flex; gap: 0.5rem; }
+    .fb-drop {
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
+      padding: 0.85rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      background: var(--surface-alt);
+    }
+    .fb-drop.dragover { border-color: var(--accent); color: var(--fg); background: var(--accent-soft); }
+    .fb-previews { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .fb-preview { position: relative; }
+    .fb-preview img {
+      width: 64px; height: 64px; object-fit: cover;
+      border: 1px solid var(--border); border-radius: var(--radius);
+    }
+    .fb-preview button {
+      position: absolute; top: -6px; right: -6px;
+      width: 20px; height: 20px; min-height: 0; padding: 0;
+      border-radius: 999px; font-size: 12px; line-height: 1;
+      background: var(--error); border-color: var(--error);
+    }
+    .fb-check { flex-direction: row; align-items: center; gap: 0.5rem; font-weight: 400; }
+    .fb-check input { width: auto; }
+    .fb-actions { display: flex; gap: 0.75rem; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .fb-success { color: var(--success); background: var(--success-bg); border: 1px solid var(--success-border); padding: 1rem; border-radius: var(--radius); text-align: center; }
+  </style>
+  <div class="fb-overlay" id="fb-overlay" role="dialog" aria-modal="true" aria-labelledby="fb-title">
+    <div class="fb-modal">
+      <div id="fb-body">
+        <div id="fb-form-panel">
+          <h2 id="fb-title">Send feedback</h2>
+          <p class="muted" style="margin: -0.5rem 0 0;">Tell us what's working, what's broken, or what you'd like to see — it goes straight to the team.</p>
+          <form id="fb-form">
+            <input type="hidden" name="category" id="fb-category" value="general">
+            <input type="hidden" name="page_path" id="fb-page-path" value="">
+            <p class="fb-q">What kind of feedback is this?</p>
+            <div class="fb-cats" role="group" aria-label="Category">
+              <button type="button" class="fb-cat" data-cat="bug">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg>
+                <span class="fb-cat-label">Bug Report</span>
+                <span class="fb-cat-desc">Something isn't working</span>
+              </button>
+              <button type="button" class="fb-cat" data-cat="feature">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
+                <span class="fb-cat-label">Feature Request</span>
+                <span class="fb-cat-desc">Suggest an improvement</span>
+              </button>
+              <button type="button" class="fb-cat active" data-cat="general">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span class="fb-cat-label">General Feedback</span>
+                <span class="fb-cat-desc">Share your thoughts</span>
+              </button>
+            </div>
+            <label>
+              Description
+              <textarea name="description" id="fb-description" rows="5" required
+                        placeholder="Share your thoughts — what's working, what's confusing, anything you'd change?"></textarea>
+            </label>
+            <div class="fb-q">Images <span class="muted" style="font-weight: 400;">(optional)</span></div>
+            <div class="fb-drop" id="fb-drop" tabindex="0" role="button"
+                 aria-label="Add images — click, drop, or paste">
+              Click, drop, or paste images (max 5 — large ones are compressed automatically)
+            </div>
+            <input type="file" id="fb-file" accept="image/*" multiple style="display:none;">
+            <div class="fb-previews" id="fb-previews"></div>
+            <label class="fb-check">
+              <input type="checkbox" id="fb-anon"> Submit anonymously
+            </label>
+            <div class="error" id="fb-error" style="display:none;"></div>
+            <div class="fb-actions">
+              <span class="fb-hint">⌘/Ctrl&nbsp;+&nbsp;Enter to send</span>
+              <span class="fb-actions-btns">
+                <button type="button" class="secondary" id="fb-cancel">Cancel</button>
+                <button type="submit" id="fb-submit">Send feedback</button>
+              </span>
+            </div>
+          </form>
+        </div>
+        <div id="fb-success-panel" style="display: none;">
+          <div class="fb-success">Thank you — your feedback has been sent.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var trigger = document.getElementById('fb-feedback-nav');
+      var overlay = document.getElementById('fb-overlay');
+      if (!trigger || !overlay) return;
+      var formPanel = document.getElementById('fb-form-panel');
+      var successPanel = document.getElementById('fb-success-panel');
+      var form = document.getElementById('fb-form');
+      var catInput = document.getElementById('fb-category');
+      var pagePathInput = document.getElementById('fb-page-path');
+      var descEl = document.getElementById('fb-description');
+      var drop = document.getElementById('fb-drop');
+      var fileInput = document.getElementById('fb-file');
+      var previews = document.getElementById('fb-previews');
+      var anon = document.getElementById('fb-anon');
+      var errEl = document.getElementById('fb-error');
+      var submitBtn = document.getElementById('fb-submit');
+      var MAX_FILES = 5;
+      var MAX_BYTES = 2 * 1024 * 1024;
+      var MAX_DIM = 1600;  // longest edge (px) after downscale
+      // Per-category writing prompts — nudge people toward useful detail.
+      var PLACEHOLDERS = {
+        bug: 'What did you do? What happened? What did you expect to happen?',
+        feature: 'What would you like to see, and how would it help your work?',
+        general: "Share your thoughts — what's working, what's confusing, anything you'd change?"
+      };
+      var files = [];
+
+      function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+      function clearError() { errEl.textContent = ''; errEl.style.display = 'none'; }
+
+      // Re-encode an oversized image (downscale + JPEG) in the browser so users
+      // don't have to shrink screenshots themselves. Already-small images and
+      // vector/animated formats pass through untouched; on any error we fall
+      // back to the original (the server still enforces the 2 MB cap). Returns
+      // a Promise<File>.
+      function compressImage(file) {
+        return new Promise(function (resolve) {
+          if (file.size <= MAX_BYTES || /image\/(svg|gif)/i.test(file.type)) { resolve(file); return; }
+          var url = URL.createObjectURL(file);
+          var img = new Image();
+          img.onload = function () {
+            URL.revokeObjectURL(url);
+            var scale = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+            var cw = Math.max(1, Math.round(img.naturalWidth * scale));
+            var ch = Math.max(1, Math.round(img.naturalHeight * scale));
+            var canvas = document.createElement('canvas');
+            canvas.width = cw; canvas.height = ch;
+            var ctx = canvas.getContext('2d');
+            // White matte so transparent PNGs don't flatten to black as JPEG.
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
+            ctx.drawImage(img, 0, 0, cw, ch);
+            var q = 0.85;
+            (function attempt() {
+              canvas.toBlob(function (blob) {
+                if (!blob) { resolve(file); return; }
+                if (blob.size <= MAX_BYTES || q <= 0.4) {
+                  var base = (file.name || 'screenshot').replace(/\.[^.]+$/, '');
+                  resolve(new File([blob], base + '.jpg', { type: 'image/jpeg' }));
+                } else { q -= 0.15; attempt(); }
+              }, 'image/jpeg', q);
+            })();
+          };
+          img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+          img.src = url;
+        });
+      }
+
+      function renderPreviews() {
+        previews.innerHTML = '';
+        files.forEach(function (f, i) {
+          var wrap = document.createElement('div');
+          wrap.className = 'fb-preview';
+          var img = document.createElement('img');
+          img.src = URL.createObjectURL(f);
+          img.alt = f.name || 'screenshot';
+          var rm = document.createElement('button');
+          rm.type = 'button';
+          rm.textContent = '×';
+          rm.setAttribute('aria-label', 'Remove screenshot');
+          rm.addEventListener('click', function () {
+            files.splice(i, 1);
+            renderPreviews();
+          });
+          wrap.appendChild(img);
+          wrap.appendChild(rm);
+          previews.appendChild(wrap);
+        });
+      }
+
+      function addFiles(list) {
+        clearError();
+        // Process sequentially: each oversized image is compressed (async via
+        // canvas) before the size check, so users don't have to shrink images
+        // by hand. We only reject if it's STILL over the cap afterwards.
+        var incoming = Array.prototype.slice.call(list);
+        (function next(i) {
+          if (i >= incoming.length) { renderPreviews(); return; }
+          var f = incoming[i];
+          if (!f.type || f.type.indexOf('image/') !== 0) { showError('Only image files can be attached.'); return next(i + 1); }
+          if (files.length >= MAX_FILES) { showError('At most 5 screenshots.'); renderPreviews(); return; }
+          compressImage(f).then(function (out) {
+            if (out.size > MAX_BYTES) {
+              showError('Screenshot is too large even after compression — please attach a smaller image.');
+            } else {
+              files.push(out);
+            }
+            next(i + 1);
+          });
+        })(0);
+      }
+
+      function open() {
+        clearError();
+        pagePathInput.value = window.location.pathname;
+        // Collapse the mobile hamburger panel (the trigger lives inside it).
+        var navToggle = document.getElementById('nav-toggle');
+        if (navToggle) navToggle.checked = false;
+        overlay.classList.add('open');
+        descEl.focus();
+        document.addEventListener('keydown', onKey);
+      }
+      function close() {
+        overlay.classList.remove('open');
+        document.removeEventListener('keydown', onKey);
+        resetForm();
+      }
+      // Reset to a clean form for the next open (mirrors the modal closing in
+      // the reference app — each open starts fresh).
+      function resetForm() {
+        formPanel.style.display = '';
+        successPanel.style.display = 'none';
+        submitBtn.disabled = false;
+        clearError();
+        descEl.value = '';
+        anon.checked = false;
+        files = [];
+        renderPreviews();
+        selectCategory('general');
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') { close(); }
+        else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { form.requestSubmit(); }
+      }
+
+      trigger.addEventListener('click', open);
+      document.getElementById('fb-cancel').addEventListener('click', close);
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+
+      function selectCategory(cat) {
+        document.querySelectorAll('.fb-cat').forEach(function (b) {
+          b.classList.toggle('active', b.getAttribute('data-cat') === cat);
+        });
+        catInput.value = cat;
+        descEl.placeholder = PLACEHOLDERS[cat] || '';
+      }
+      Array.prototype.forEach.call(document.querySelectorAll('.fb-cat'), function (btn) {
+        btn.addEventListener('click', function () { selectCategory(btn.getAttribute('data-cat')); });
+      });
+
+      drop.addEventListener('click', function () { fileInput.click(); });
+      drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+      fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('dragover'); });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('dragover'); });
+      });
+      drop.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+      // Clipboard paste anywhere while the modal is open.
+      document.addEventListener('paste', function (e) {
+        if (!overlay.classList.contains('open') || !e.clipboardData) return;
+        var imgs = [];
+        Array.prototype.forEach.call(e.clipboardData.files || [], function (f) {
+          if (f.type && f.type.indexOf('image/') === 0) imgs.push(f);
+        });
+        if (imgs.length) addFiles(imgs);
+      });
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        clearError();
+        var desc = descEl.value.trim();
+        if (!desc) { showError('Description is required.'); return; }
+        var fd = new FormData();
+        fd.append('category', catInput.value);
+        fd.append('description', desc);
+        fd.append('is_anonymous', anon.checked ? 'true' : 'false');
+        fd.append('page_path', window.location.pathname);
+        files.forEach(function (f) { fd.append('screenshots', f, f.name || 'screenshot.png'); });
+        submitBtn.disabled = true;
+        fetch('/feedback', { method: 'POST', body: fd, credentials: 'same-origin' })
+          .then(function (r) {
+            return r.json().catch(function () { return {}; }).then(function (data) {
+              if (r.ok && data.ok) {
+                formPanel.style.display = 'none';
+                successPanel.style.display = '';
+                setTimeout(close, 1600);
+              } else {
+                submitBtn.disabled = false;
+                showError(data.error || ('Submission failed (' + r.status + ').'));
+              }
+            });
+          })
+          .catch(function () { submitBtn.disabled = false; showError('Network error — please try again.'); });
+      });
+    })();
+  </script>
+  {% endif %}
+
+  {# Reusable confirmation modal — replaces native confirm(). Shared by every
+     page (admin, dashboard, workbench). Two ways to use it:
+       1. Declarative: add data-confirm="message" to a <form> (the submit is
+          intercepted) or to a <button>/<a> with data-confirm-action="<url>"
+          which POSTs a form to that url on confirm.
+       2. Programmatic: window.acsConfirm({ message, onConfirm, danger }).
+     Styling mirrors the feedback modal (.fb-*), themed via CSS vars. #}
+  <style>
+    .cm-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0, 0, 0, 0.45);
+      display: none; align-items: center; justify-content: center; padding: 1rem;
+    }
+    .cm-overlay.open { display: flex; }
+    .cm-modal {
+      background: var(--surface); color: var(--fg);
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+      width: 100%; max-width: 440px; padding: 1.5rem 1.75rem;
+    }
+    .cm-modal h2 { margin: 0 0 0.75rem; font-size: 1.15rem; }
+    .cm-message { color: var(--fg-soft); font-size: 0.95rem; line-height: 1.45; margin: 0 0 1.25rem; }
+    .cm-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+  </style>
+  <script>
+    // .term-help edge guard: the tooltip box is left-anchored; flip it to
+    // right-anchored when it would cross the right viewport edge (compare
+    // lanes put terms at the far right). Runs on hover/focus of the term.
+    (function () {
+      const BOX_W = 17 * 16 + 8;  // ::after max-width (17rem) + margin, px
+      function guard(ev) {
+        const el = ev.target && ev.target.closest ? ev.target.closest('.term-help') : null;
+        if (!el) return;
+        el.classList.toggle(
+          'term-help-flip',
+          el.getBoundingClientRect().left + BOX_W > window.innerWidth
+        );
+      }
+      document.addEventListener('mouseover', guard, true);
+      document.addEventListener('focusin', guard, true);
+    })();
+  </script>
+
+  <div class="cm-overlay" id="cm-overlay" role="dialog" aria-modal="true" aria-labelledby="cm-title">
+    <div class="cm-modal">
+      <h2 id="cm-title">Are you sure?</h2>
+      <p class="cm-message" id="cm-message"></p>
+      <div class="cm-actions">
+        <button type="button" class="secondary" id="cm-cancel">Cancel</button>
+        <button type="button" id="cm-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var overlay = document.getElementById('cm-overlay');
+      if (!overlay) return;
+      var titleEl = document.getElementById('cm-title');
+      var msgEl = document.getElementById('cm-message');
+      var confirmBtn = document.getElementById('cm-confirm');
+      var cancelBtn = document.getElementById('cm-cancel');
+      var pending = null;  // { onConfirm }
+
+      function close() {
+        overlay.classList.remove('open');
+        document.removeEventListener('keydown', onKey);
+        pending = null;
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') close();
+        else if (e.key === 'Enter') { e.preventDefault(); doConfirm(); }
+      }
+      function doConfirm() {
+        var p = pending;
+        close();
+        if (p && p.onConfirm) p.onConfirm();
+      }
+      function open(opts) {
+        pending = { onConfirm: opts.onConfirm };
+        titleEl.textContent = opts.title || 'Are you sure?';
+        msgEl.textContent = opts.message || '';
+        confirmBtn.textContent = opts.confirmLabel || 'Confirm';
+        // Danger styling for destructive actions (red confirm button).
+        confirmBtn.classList.toggle('danger', opts.danger !== false);
+        overlay.classList.add('open');
+        document.addEventListener('keydown', onKey);
+        confirmBtn.focus();
+      }
+      // Public API.
+      window.acsConfirm = open;
+
+      confirmBtn.addEventListener('click', doConfirm);
+      cancelBtn.addEventListener('click', close);
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+
+      // Declarative wiring: forms carrying data-confirm intercept their submit.
+      document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+        form.addEventListener('submit', function (e) {
+          if (form.dataset.cmConfirmed === '1') { form.dataset.cmConfirmed = ''; return; }
+          e.preventDefault();
+          open({
+            message: form.getAttribute('data-confirm'),
+            danger: form.getAttribute('data-confirm-danger') !== 'false',
+            confirmLabel: form.getAttribute('data-confirm-label') || 'Confirm',
+            onConfirm: function () { form.dataset.cmConfirmed = '1'; form.submit(); },
+          });
+        });
+      });
+    })();
+  </script>
+
+  {# Inline rename for API-key names. Progressive enhancement over a plain
+     POST form: a pen swaps the name text for an input + check (submit) + X
+     (revert, no request). Used on the dashboard key list and the key-created
+     screen. Any ".key-rename" block on the page is wired automatically. #}
+  <style>
+    /* Toggling between the view (name + pen) and the form (input + check/X) is
+       a seamless in-place swap: only one is shown at a time, both sized to
+       their own content so nothing wraps or jumps height. ``max-content`` lets
+       the editing form keep its icons on the same line as the field even inside
+       a narrow table cell (it overflows horizontally rather than wrapping). */
+    .key-rename { display: inline-block; }
+    .key-rename-view {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      white-space: nowrap; min-width: 0;
+    }
+    .key-rename-form {
+      /* flex-direction:row overrides the global ``form { flex-direction: column }``
+         (which would otherwise stack the field above the icons). */
+      display: flex; flex-direction: row; flex-wrap: nowrap;
+      align-items: center; gap: 0.25rem; white-space: nowrap; max-width: 100%;
+    }
+    .key-rename-view[hidden], .key-rename-form[hidden] { display: none; }
+    .key-rename-input {
+      flex: 1 1 auto; width: 8rem; min-width: 3rem; margin: 0;
+      padding: 0.25rem 0.5rem; font-size: 0.9rem;
+    }
+    .key-rename-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Compact icon buttons in the rename form; never shrink. */
+    .key-rename .icon-btn { flex: 0 0 auto; min-height: 28px; padding: 0.25rem 0.4rem; }
+    .key-rename .icon-btn svg { width: 14px; height: 14px; }
+    /* Keep the pen subtle until the row is hovered/focused. */
+    .key-rename-edit { opacity: 0.5; }
+    .key-rename:hover .key-rename-edit,
+    .key-rename-edit:focus-visible { opacity: 1; }
+  </style>
+  <script>
+    (function () {
+      document.querySelectorAll('.key-rename').forEach(function (wrap) {
+        var view = wrap.querySelector('.key-rename-view');
+        var form = wrap.querySelector('.key-rename-form');
+        var input = wrap.querySelector('.key-rename-input');
+        var penBtn = wrap.querySelector('.key-rename-edit');
+        var cancelBtn = wrap.querySelector('.key-rename-cancel');
+        if (!view || !form || !input || !penBtn) return;
+
+        function startEdit() {
+          // Reset to the last-saved value each time we open.
+          input.value = wrap.getAttribute('data-name') || '';
+          view.hidden = true;
+          form.hidden = false;
+          input.focus();
+          input.select();
+        }
+        function cancelEdit() {
+          form.hidden = true;
+          view.hidden = false;
+          penBtn.focus();
+        }
+        penBtn.addEventListener('click', startEdit);
+        if (cancelBtn) cancelBtn.addEventListener('click', cancelEdit);
+        // Escape cancels without saving.
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+        });
+        // Submit goes through normally (full-page POST → redirect to /dashboard).
+      });
+    })();
+  </script>
+</body>
+</html>

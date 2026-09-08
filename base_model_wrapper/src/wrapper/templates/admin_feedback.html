@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Feedback — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .stats-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+  }
+  .stat-card {
+    flex: 1 1 7rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.9rem 1.1rem;
+    box-shadow: var(--shadow);
+  }
+  .stat-card .stat-num { font-size: 1.5rem; font-weight: 600; font-family: var(--font-serif); color: var(--fg); }
+  .stat-card .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .filter-group { margin-bottom: 1.25rem; }
+  .filter-group .filter-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-right: 0.5rem; }
+  .filter-pills { display: inline-flex; gap: 0.4rem; flex-wrap: wrap; }
+  a.filter-pill {
+    display: inline-block;
+    padding: 0.2rem 0.7rem;
+    font-size: 0.82rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    color: var(--fg-soft);
+    background: var(--surface);
+  }
+  a.filter-pill:hover { background: var(--surface-alt); text-decoration: none; color: var(--fg); }
+  a.filter-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .cat-bug { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  .cat-feature { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
+  .cat-general { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  .status-open { background: var(--warn-bg); color: var(--accent-2); border-color: var(--warn-border); }
+  .status-resolved { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+
+  .fb-item { margin-bottom: 0.75rem; }
+  /* Lay the disclosure marker (base.html's `summary::before` ›) inline with the
+     summary content. Without this the marker sits on its own line above the
+     pills, because `.fb-summary` is a block-level flex child. */
+  .fb-item > summary { display: flex; align-items: center; }
+  .fb-item > summary::before { margin-right: 0.5rem; flex: 0 0 auto; }
+  .fb-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .fb-summary .fb-desc { color: var(--fg-soft); flex: 1 1 12rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fb-summary .fb-meta { color: var(--muted); font-size: 0.82rem; }
+  .fb-full {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 0.9rem;
+    margin: 0 0 1rem;
+    color: var(--fg);
+  }
+  .fb-shots { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .fb-shots a { display: inline-block; }
+  .fb-shots img {
+    /* Fixed thumbnail box with `contain` so any aspect ratio (portrait phone
+       grabs, wide desktop shots) shows whole; surface background keeps tiny or
+       transparent images visible as a clickable tile. */
+    width: 140px;
+    height: 100px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    object-fit: contain;
+    background: var(--surface-alt);
+    padding: 2px;
+  }
+  .fb-resolution {
+    background: var(--success-bg);
+    border: 1px solid var(--success-border);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.85rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    color: var(--fg-soft);
+  }
+  .fb-action-form { flex-direction: row; align-items: center; gap: 0.5rem; max-width: 100%; flex-wrap: wrap; }
+  .fb-action-form input[type="text"] { flex: 1 1 16rem; }
+
+  /* Resolve form: label + admin-only note stacked above the input row. */
+  .fb-resolve { max-width: 100%; gap: 0.15rem; }
+  /* `display:block` overrides base.html's flex-column `label`, which would
+     otherwise push the "(optional)" span onto its own line. */
+  .fb-resolve > label { display: block; font-size: 0.85rem; color: var(--fg-soft); font-weight: 500; }
+  .fb-resolve-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .fb-resolve-row input[type="text"] { flex: 1 1 16rem; }
+
+  @media (max-width: 600px) {
+    .fb-action-form { flex-direction: column; align-items: stretch; }
+    .fb-action-form input[type="text"] { flex: 1 1 auto; width: 100%; }
+    .fb-resolve-row input[type="text"] { flex: 1 1 auto; width: 100%; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Feedback</h1>
+<p class="lead" style="margin-bottom: 2rem;">Triage in-app feedback from users.</p>
+
+{% if flash_message %}
+  <p class="pill status-resolved" style="display:inline-block;">{{ flash_message }}</p>
+{% endif %}
+{% if flash_error %}
+  <p class="pill cat-bug" style="display:inline-block;">{{ flash_error }}</p>
+{% endif %}
+
+<div class="stats-row">
+  <div class="stat-card"><div class="stat-num">{{ stats.total }}</div><div class="stat-label">Total</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.open }}</div><div class="stat-label">Open</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.resolved }}</div><div class="stat-label">Resolved</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.bugs }}</div><div class="stat-label">Bugs</div></div>
+  <div class="stat-card"><div class="stat-num">{{ stats.features }}</div><div class="stat-label">Features</div></div>
+</div>
+
+<div class="filter-group">
+  <span class="filter-label">Status</span>
+  <span class="filter-pills">
+    {% for s in ["all", "open", "resolved"] %}
+      <a class="filter-pill {{ 'active' if status_filter == s else '' }}"
+         href="?status={{ s }}&category={{ category_filter }}">{{ s }}</a>
+    {% endfor %}
+  </span>
+</div>
+<div class="filter-group">
+  <span class="filter-label">Category</span>
+  <span class="filter-pills">
+    <a class="filter-pill {{ 'active' if category_filter == 'all' else '' }}"
+       href="?status={{ status_filter }}&category=all">all</a>
+    {% for c in categories %}
+      <a class="filter-pill {{ 'active' if category_filter == c else '' }}"
+         href="?status={{ status_filter }}&category={{ c }}">{{ c }}</a>
+    {% endfor %}
+  </span>
+</div>
+
+{% if items %}
+  {% for item in items %}
+  {% set fb = item.fb %}
+  <details class="fb-item">
+    <summary>
+      <span class="fb-summary">
+        <span class="pill cat-{{ fb.category }}">{{ fb.category }}</span>
+        <span class="pill status-{{ fb.status }}">{{ fb.status }}</span>
+        <span class="fb-desc">{{ fb.description }}</span>
+        {% if item.screenshot_ids %}<span class="fb-meta">📎 {{ item.screenshot_ids|length }}</span>{% endif %}
+        <span class="fb-meta">{{ fb.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        <span class="fb-meta">{{ item.submitter_email or "Anonymous" }}</span>
+      </span>
+    </summary>
+    <div class="details-body">
+      <div class="fb-full">{{ fb.description }}</div>
+
+      {% if item.screenshot_ids %}
+      <div class="fb-shots">
+        {% for sid in item.screenshot_ids %}
+          <a href="/admin/feedback/screenshots/{{ sid }}" target="_blank" rel="noopener">
+            <img src="/admin/feedback/screenshots/{{ sid }}" alt="screenshot" loading="lazy">
+          </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <dl class="fields">
+        <dt>Submitted by</dt>
+        <dd>{{ item.submitter_email or "Anonymous" }}</dd>
+        <dt>Page</dt>
+        <dd>{% if fb.page_path %}<code>{{ fb.page_path }}</code>{% else %}<span class="muted">—</span>{% endif %}</dd>
+        <dt>User agent</dt>
+        <dd><span class="muted">{{ fb.user_agent or "—" }}</span></dd>
+      </dl>
+
+      {% if fb.status == "resolved" %}
+        <div class="fb-resolution" style="margin-top:1rem;">
+          <strong>Resolved</strong>
+          {% if fb.resolved_at %} on {{ fb.resolved_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+          {% if item.resolved_by_email %} by {{ item.resolved_by_email }}{% endif %}
+          {% if fb.admin_notes %}<div style="margin-top:0.4rem; white-space:pre-wrap;">{{ fb.admin_notes }}</div>{% endif %}
+        </div>
+        <form class="fb-action-form" action="/admin/feedback/{{ fb.id }}/reopen" method="post">
+          <button type="submit" class="secondary small">Reopen</button>
+        </form>
+      {% else %}
+        <form class="fb-resolve" action="/admin/feedback/{{ fb.id }}/resolve" method="post">
+          <label for="fb-notes-{{ fb.id }}">Resolution notes <span class="muted" style="font-weight:400;">(optional)</span></label>
+          <p class="muted" style="margin:0 0 0.45rem; font-size:0.82rem;">Visible to admins only — not shown to the person who submitted the feedback.</p>
+          <div class="fb-resolve-row">
+            <input id="fb-notes-{{ fb.id }}" type="text" name="admin_notes" placeholder="What was done or decided">
+            <button type="submit" class="small">Mark resolved</button>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+{% else %}
+  <p class="muted">No feedback matches the current filter.</p>
+{% endif %}
+{% endblock %}

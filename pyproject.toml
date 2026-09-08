@@ -1,0 +1,19 @@
+[project]
+name = "acs-base-model-api"
+version = "0.1.0"
+description = "Modal + vLLM base-model API for LLM-psychology research (Track B pilot)"
+requires-python = ">=3.12"
+
+# Local dev deps — what you need on your laptop to deploy the Modal app.
+# The Modal container has its own image (see modal_app.py).
+dependencies = [
+    # Pin to the 1.5 minor (migrated in ACS-125). modal_app.py imports
+    # `modal.experimental` (clustered, get_cluster_info) at module load; those
+    # public-experimental symbols were verified to survive in 1.5.1. Floor at
+    # 1.5.1 — the version verified live — not 1.5.0 (the version prod was on
+    # during the ACS-123 incident, which could not be re-verified). Moving to
+    # 1.6 is a tracked, code-change-gated migration.
+    "modal>=1.5.1,<1.6",
+    "httpx>=0.27.0",
+    "transformers>=4.44.0",  # tokenizer-parity checks
+]

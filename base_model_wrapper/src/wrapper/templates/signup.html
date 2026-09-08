@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Apply for access — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  /* Wider, calmer application form than the base 420px column (ACS-24 polish).
+     Ground-rules + agree-row styles live in _ground_rules.html (shared with
+     the invite-accept form). */
+  .signup-form { max-width: 560px; }
+  /* Honeypot (ACS-260): moved off-screen rather than display:none so naive
+     form-fillers still "see" and stuff it. Humans never do. */
+  .hp-wrap { position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  /* Help line between a question's label and its box (ACS-302). */
+  .field-help { display: block; font-size: 0.85rem; font-weight: 400; color: var(--muted); margin: 0.15rem 0 0.35rem; }
+  /* Required-field marker (ACS-303). */
+  .req { color: var(--error); font-weight: 600; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Apply for access</h1>
+
+{% if signup_disabled %}
+<p class="lead" style="max-width: 480px;">
+  Signups aren't open right now — we're in a private beta.
+</p>
+<p class="notice" style="max-width: 480px;">
+  Email <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a>
+  with a brief note on how you'd like to use it, and we'll review your request.
+</p>
+<p class="muted" style="margin-top: 1.75rem; max-width: 480px;">
+  Already have an account? <a href="/login">Sign in</a>.
+</p>
+{% else %}
+<p class="lead" style="margin-bottom: 2rem;">
+  Set up an account; an admin will review and approve. You'll receive an email
+  when the application has been reviewed.
+</p>
+
+{% if submitted %}
+<p class="success" style="max-width: 560px;">
+  Application submitted. You'll receive an email when an admin has reviewed it.
+  You can close this tab.
+</p>
+{% if resubmitted %}
+<p class="notice" style="max-width: 560px;">
+  We've updated your earlier application.
+</p>
+{% endif %}
+{% endif %}
+
+{% if error %}<p class="error" style="max-width: 560px;">{{ error }}</p>{% endif %}
+
+<form action="/signup" method="post" class="signup-form">
+  {# Channel attribution (ACS-210): ?src= from the posted link rides along. #}
+  {% if src %}<input type="hidden" name="src" value="{{ src }}">{% endif %}
+  {# Bot guards (ACS-260): signed render-timestamp + off-screen honeypot. #}
+  {% if ts %}<input type="hidden" name="ts" value="{{ ts }}">{% endif %}
+  <div class="hp-wrap" aria-hidden="true">
+    <label>Website
+      <input type="text" name="website" tabindex="-1" autocomplete="off" value="">
+    </label>
+  </div>
+  <p class="notice" style="margin-bottom: 1.25rem;">
+    Most of these questions are optional, but the more you tell us the easier it
+    is to evaluate your application &mdash; if we don't have enough signal we'll
+    err on the side of rejecting.
+  </p>
+  <p class="muted" style="font-size: 0.85rem; margin-top: -0.75rem;">
+    Fields marked <span class="req">*</span> are required.
+  </p>
+  {# The base `label` style is a flex COLUMN — every direct child is its own
+     row. Keep the caption (name + asterisk + parenthetical) inside ONE span
+     so it stays on a single line (ACS-303 follow-up). #}
+  <label><span>Email <span class="req" aria-hidden="true">*</span></span>
+    <input type="email" name="email" required autofocus value="{{ email or '' }}">
+  </label>
+  <label><span>Name <span class="req" aria-hidden="true">*</span>
+      <span class="muted">(a full name is preferred; a publicly used pseudonym is acceptable)</span></span>
+    <input type="text" name="name" required maxlength="120" value="{{ name or '' }}">
+  </label>
+  <label><span>Organization <span class="req" aria-hidden="true">*</span>
+      <span class="muted">(or &ldquo;Independent&rdquo;)</span></span>
+    <input type="text" name="org" required maxlength="120" value="{{ org or '' }}">
+  </label>
+  <label><span>Profile link</span>
+    <span class="field-help">Link to your profile page &mdash; your research-org
+      page, Google Scholar, or LinkedIn; for pseudonymous researchers, your
+      X/Twitter or LessWrong profile.</span>
+    <input type="text" name="profile_link" maxlength="500" value="{{ profile_link or '' }}">
+  </label>
+  <label><span>Planned usage <span class="req" aria-hidden="true">*</span></span>
+    <span class="field-help">What kinds of experiments or explorations would you
+      run on the platform? Please include specifics if you can.</span>
+    <textarea name="use_case" required rows="6" maxlength="2000">{{ use_case or '' }}</textarea>
+  </label>
+  <label><span>Results</span>
+    <span class="field-help">What would be the ideal results of your explorations,
+      and why would they be interesting? Where will you publish the results
+      (arXiv, LessWrong, X/Twitter, blog, &hellip;)?</span>
+    <textarea name="outcome" rows="4" maxlength="2000">{{ outcome or '' }}</textarea>
+  </label>
+  <label><span>Prior work</span>
+    <span class="field-help">Relevant prior work or thinking in LLM psychology,
+      interpretability, cyborgism etc. Link us to it &mdash; X/Twitter, LessWrong,
+      blog, Google Scholar, papers. If you don't have a good link: what have you
+      previously noticed or found interesting about base models?</span>
+    <textarea name="prior_work" rows="4" maxlength="2000">{{ prior_work or '' }}</textarea>
+  </label>
+  <label><span>How did you hear about us?</span>
+    <span class="field-help">E.g. X/Twitter, LessWrong, a Slack/Discord community,
+      a friend, a talk &mdash; ideally with specifics (which account, which
+      community, who).</span>
+    <textarea name="referral" rows="2" maxlength="2000">{{ referral or '' }}</textarea>
+  </label>
+  {% include "_ground_rules.html" %}
+
+  <div>
+    <button type="submit">Apply for access</button>
+  </div>
+</form>
+
+<p class="muted" style="margin-top: 1.75rem; max-width: 560px;">
+  Already have an account? <a href="/login">Sign in</a>.
+</p>
+{% endif %}
+{% endblock %}

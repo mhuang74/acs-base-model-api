@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Invalid invite — ACS Infra{% endblock %}
+{% block content %}
+<h1>Invite link invalid</h1>
+<p class="lead" style="margin-bottom: 2rem;">{{ reason }}</p>
+<p class="muted">
+  If you believe this is a mistake, contact the person who sent you the invite
+  or email <a href="mailto:infra@acsresearch.org">infra@acsresearch.org</a>.
+</p>
+{% endblock %}

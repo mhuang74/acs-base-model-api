@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Looms — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  main { max-width: 820px; }
+  .loomlist-head h1 { margin: 0 0 0.35rem; }
+  .loomlist-head .sub { color: var(--muted); font-size: 0.9rem; display: block; margin: 0 0 0.25rem; }
+  .loomlist-head .note { color: var(--muted); font-size: 0.8rem; display: block; }
+  .loomlist-new { margin: 1.25rem 0 1.5rem; }
+  .loomlist-new .new-btn {
+    display: inline-flex; align-items: center; gap: 0.45rem;
+  }
+  .loomlist-heading {
+    font-family: var(--font-sans);
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 0.6rem;
+  }
+  .loomlist ul { list-style: none; margin: 0; padding: 0; }
+  .loomlist li {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    margin-bottom: 0.5rem; background: var(--surface);
+  }
+  .loomlist li:hover { border-color: var(--border-strong); }
+  .loomlist li a {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+    padding: 0.7rem 0.95rem; text-decoration: none; color: var(--fg);
+  }
+  .loomlist .title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .loomlist .when { color: var(--muted); font-size: 0.8rem; flex-shrink: 0; }
+  .loomlist-empty { color: var(--muted); font-style: italic; padding: 0.5rem 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<section>
+  <div class="loomlist-head">
+    <h1>Looms</h1>
+    <span class="sub">Tree exploration — branch, backtrack, inspect per-token logprobs. Each loom is saved on its own, like a workbench chat.</span>
+    <span class="note">Private to you — only you can see your looms.</span>
+  </div>
+
+  <form action="/loom/new" method="post" class="loomlist-new">
+    <button class="new-btn" type="submit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      New loom
+    </button>
+  </form>
+
+  <p class="loomlist-heading">Recent</p>
+  <div class="loomlist">
+    {% if looms %}
+    <ul>
+      {% for l in looms %}
+      <li>
+        <a href="/loom/{{ l.id }}" title="{{ l.title }}">
+          <span class="title">{{ l.title or "Untitled loom" }}</span>
+          <span class="when">{{ l.updated_at.strftime("%Y-%m-%d") if l.updated_at else "" }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="loomlist-empty">No looms yet. Click <strong>New loom</strong> to start branching from a seed prompt.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

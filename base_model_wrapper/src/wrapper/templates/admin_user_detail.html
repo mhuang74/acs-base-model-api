@@ -1,0 +1,496 @@
+{% extends "base.html" %}
+{% block title %}Admin · {{ target.email }}{% endblock %}
+{% block head_extra %}
+<style>
+  .budget-form { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; max-width: none; }
+  .budget-form label { flex-direction: column; }
+  .budget-form input[type=number] { width: 9rem; }
+  .key-row td { vertical-align: top; }
+  .pill.status-pending { background: var(--warn-bg); color: var(--accent-2); border-color: var(--warn-border); }
+  .pill.status-approved { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .pill.status-rejected { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  /* Tags (ACS-371) — a chip plus its own remove button, in one row. */
+  .tag-list { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .tag-chip { display: inline-flex; align-items: center; gap: 0.3rem; background: var(--accent-soft); color: var(--accent);
+              border: 1px solid var(--accent-soft); border-radius: 999px; padding: 0.15rem 0.3rem 0.15rem 0.6rem; font-size: 0.82rem; }
+  .tag-chip form { margin: 0; display: inline; }
+  .tag-chip button { background: none; border: 0; color: inherit; cursor: pointer; font-size: 1rem;
+                     line-height: 1; padding: 0 0.2rem; opacity: 0.65; }
+  .tag-chip button:hover { opacity: 1; }
+  .tag-add { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.75rem; max-width: none; }
+  /* Suspended is dormant, not a verdict (ACS-353) — neutral like .pill.paused. */
+  .pill.status-suspended { background: var(--surface-alt); color: var(--fg-soft); border-color: var(--border); }
+  /* Engagement buckets (ACS-300) — same thresholds as Metabase C1. */
+  .pill.eng-active { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .pill.eng-cooling { background: var(--warn-bg); color: var(--accent-2); border-color: var(--warn-border); }
+  .pill.eng-churned { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  .pill.eng-never_activated { color: var(--muted); }
+  /* Decision buttons — same palette as the /admin/users list actions. */
+  .decision-actions { display: flex; gap: 0.6rem; align-items: center; }
+  .decision-actions form { margin: 0; }
+  .approve-btn { background: var(--success); border-color: var(--success); }
+  .approve-btn:hover { background: #25553a; border-color: #25553a; }
+  .reject-btn { background: var(--error); border-color: var(--error); }
+  .reject-btn:hover { background: #91201a; border-color: #91201a; }
+
+  @media (max-width: 760px) {
+    .budget-form { width: 100%; }
+    .budget-form > label { flex: 1 1 calc(50% - 0.5rem); min-width: 0; }
+    .budget-form input[type=number] { width: 100%; }
+  }
+  @media (max-width: 480px) {
+    .budget-form > label { flex: 1 1 100%; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+
+<p style="margin-bottom: 0.5rem;"><a href="/admin">← Admin dashboard</a></p>
+<h1>{{ target.email }}</h1>
+
+{% if message %}<p class="success">{{ message }}</p>{% endif %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{# Decision block at the top: the signup-notification email deep-links here,
+   so the approve/reject call must be makeable on THIS page (ACS-211). #}
+{% if target.status == 'pending' %}
+<section>
+  <div class="card">
+    <p style="margin-top: 0;"><strong>This application is pending review.</strong></p>
+    <div class="decision-actions">
+      <form action="/admin/users/{{ target.id }}/approve" method="post"
+            data-confirm="Approve {{ target.email }}? This creates an API key and emails them."
+            data-confirm-danger="false" data-confirm-label="Approve"
+            style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="text" name="approval_reason" maxlength="2000"
+               placeholder="Why approve? (saved to notes)" style="width: 17rem;">
+        <button type="submit" class="approve-btn">✓ Approve</button>
+      </form>
+      <form action="/admin/users/{{ target.id }}/reject" method="post"
+            data-confirm="Reject {{ target.email }}? They will be emailed."
+            data-confirm-label="Reject">
+        <button type="submit" class="reject-btn">✕ Reject</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% elif target.status == 'rejected' %}
+<section>
+  <div class="card">
+    <p style="margin-top: 0;">
+      This application was <strong>rejected</strong>
+      {%- if target.rejected_at %} on {{ target.rejected_at.strftime('%Y-%m-%d') }}{% endif %}.
+      The account row is kept, so the record survives. They can submit a new
+      application with the same address — it reopens this row as pending and
+      files the old answers in Notes (ACS-312). You can also approve to reverse
+      the decision, or delete below to remove them entirely.
+    </p>
+    <div class="decision-actions">
+      <form action="/admin/users/{{ target.id }}/approve" method="post"
+            data-confirm="Approve {{ target.email }} after all? This creates an API key and emails them."
+            data-confirm-danger="false" data-confirm-label="Approve"
+            style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="text" name="approval_reason" maxlength="2000"
+               placeholder="Why approve? (saved to notes)" style="width: 17rem;">
+        <button type="submit" class="approve-btn">✓ Approve after all</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% elif target.status == 'suspended' %}
+<section>
+  <div class="card">
+    <p style="margin-top: 0;">
+      This account is <strong>suspended</strong>
+      {%- if target.suspended_at %} since {{ target.suspended_at.strftime('%Y-%m-%d') }}{% endif %}
+      {%- if suspended_by %} by {{ suspended_by }}{% endif %}.
+      They can't log in or use the API, and their web sessions were signed out.
+      Nothing was destroyed though — their API keys and usage history are
+      untouched, so unsuspending hands back exactly what they had. The reason
+      (if one was given) is in Notes below.
+    </p>
+    <div class="decision-actions">
+      <form action="/admin/users/{{ target.id }}/unsuspend" method="post"
+            data-confirm="Restore access for {{ target.email }}? Their existing API keys start working again."
+            data-confirm-danger="false" data-confirm-label="Unsuspend">
+        <button type="submit" class="approve-btn">✓ Unsuspend</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% elif target.status == 'approved' and target.id != user.id %}
+<section>
+  <div class="card">
+    <p style="margin-top: 0;">
+      Access is <strong>active</strong>. Suspending parks it reversibly — login
+      and API both stop immediately, API keys are left untouched, and
+      unsuspending restores everything. Use this for time-boxed access (a
+      hiring cohort, event tutorial accounts) or before deleting a dormant
+      account; <em>reject</em> is the terminal option, and delete below destroys
+      their usage history.
+    </p>
+    <div class="decision-actions">
+      <form action="/admin/users/{{ target.id }}/suspend" method="post"
+            data-confirm="Suspend {{ target.email }}? They'll be logged out and their API keys stop working until you unsuspend."
+            data-confirm-label="Suspend"
+            style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="text" name="reason" maxlength="2000"
+               placeholder="Why suspend? (saved to notes)" style="width: 17rem;">
+        <button type="submit" class="reject-btn">⏸ Suspend</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Profile</h2>
+  <div class="card">
+    <dl class="fields">
+      <dt>Email</dt><dd><code>{{ target.email }}</code></dd>
+      <dt>Name</dt><dd>{{ target.name or "—" }}</dd>
+      <dt>Org</dt><dd>{{ target.org or "—" }}</dd>
+      {% if target.signup_profile_link %}
+      <dt>Profile link</dt><dd style="overflow-wrap: anywhere;">{{ target.signup_profile_link | urlize(target="_blank") }}</dd>
+      {% elif target.signup_use_case %}
+      <dt>Profile link</dt><dd><span class="muted">— not provided</span></dd>
+      {% endif %}
+      {# Public-signup applicants get every question rendered, blank ones
+         included — an unanswered "Prior work" is signal, and hiding the row
+         reads as if we never asked. Invitees never saw these questions, so
+         their rows stay hidden entirely. #}
+      {% if target.signup_use_case %}
+      <dt>Planned usage</dt><dd style="white-space: pre-wrap;">{{ target.signup_use_case }}</dd>
+      <dt>Results</dt>
+      <dd style="white-space: pre-wrap;">{% if target.signup_outcome %}{{ target.signup_outcome }}{% else %}<span class="muted">— not provided</span>{% endif %}</dd>
+      <dt>Prior work</dt>
+      <dd style="white-space: pre-wrap;">{% if target.signup_prior_work %}{{ target.signup_prior_work | urlize(target="_blank") }}{% else %}<span class="muted">— not provided</span>{% endif %}</dd>
+      <dt>Heard about us</dt>
+      <dd style="white-space: pre-wrap;">{% if target.signup_referral %}{{ target.signup_referral }}{% else %}<span class="muted">— not provided</span>{% endif %}</dd>
+      {% endif %}
+      {% if target.signup_source %}<dt>Source</dt><dd>{{ target.signup_source }}</dd>{% endif %}
+      {% if target.agreed_terms_at %}<dt>Agreed to rules</dt><dd class="muted">{{ target.agreed_terms_at.strftime('%Y-%m-%d %H:%M UTC') }}</dd>{% endif %}
+      {# Filled by the user's own "Connect Discord" OAuth flow (ACS-269). #}
+      <dt>Discord</dt>
+      <dd>
+        {% if target.discord_username %}
+          connected as <code>{{ target.discord_username }}</code>
+          {% if target.discord_guild_joined is false %}<span class="pill status-pending">not in server</span>{% endif %}
+          {% if target.discord_connected_at %}<span class="muted">since {{ target.discord_connected_at.strftime('%Y-%m-%d') }}</span>{% endif %}
+        {% else %}
+          <span class="muted">not connected</span>
+        {% endif %}
+      </dd>
+      <dt>Role</dt><dd>{{ target.role }}</dd>
+      <dt>Status</dt><dd><span class="pill status-{{ target.status }}">{{ target.status }}</span></dd>
+      <dt>Created</dt><dd class="muted">{{ target.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</dd>
+      {% if target.approved_at %}<dt>Approved</dt><dd class="muted">{{ target.approved_at.strftime('%Y-%m-%d %H:%M UTC') }}</dd>{% endif %}
+      {% if target.rejected_at %}<dt>Rejected</dt><dd class="muted">{{ target.rejected_at.strftime('%Y-%m-%d %H:%M UTC') }}</dd>{% endif %}
+      {% if target.suspended_at %}<dt>Suspended</dt><dd class="muted">{{ target.suspended_at.strftime('%Y-%m-%d %H:%M UTC') }}{% if suspended_by %} by {{ suspended_by }}{% endif %}</dd>{% endif %}
+    </dl>
+  </div>
+</section>
+
+<section>
+  <h2>Engagement &amp; usage</h2>
+  {% if engagement %}
+  <div class="card">
+    <dl class="fields">
+      <dt>Engagement</dt>
+      <dd>
+        <span class="pill eng-{{ engagement.engagement }}">{{ engagement.engagement | replace('_', ' ') }}</span>
+        <span class="muted" style="margin-left: 0.5rem; font-size: 0.85rem;">active ≤7d · cooling 8–14d · churned &gt;14d</span>
+      </dd>
+      <dt>Last request</dt>
+      <dd>
+        {% if engagement.last_request_at %}
+          {{ engagement.last_request_at.strftime('%Y-%m-%d %H:%M UTC') }}
+          <span class="muted">({{ engagement.days_since_last }}d ago)</span>
+        {% else %}<span class="muted">never</span>{% endif %}
+      </dd>
+      {% if engagement.first_request_at %}
+      <dt>First request</dt>
+      <dd>
+        {{ engagement.first_request_at.strftime('%Y-%m-%d') }}
+        {% if engagement.days_to_first_request is not none %}
+          <span class="muted">({{ engagement.days_to_first_request }}d after access)</span>
+        {% endif %}
+      </dd>
+      {% endif %}
+      <dt>Requests</dt><dd>{{ "{:,}".format(engagement.requests) }}</dd>
+      <dt>Tokens (30d)</dt><dd>{{ "{:,}".format(engagement.tokens_30d) }}</dd>
+      <dt>Tokens (all-time)</dt>
+      <dd>{{ "{:,}".format(engagement.total_tokens) }}
+        <span class="muted">({{ "{:,}".format(engagement.input_tokens) }} in / {{ "{:,}".format(engagement.output_tokens) }} out)</span>
+      </dd>
+      <dt>Active weeks</dt><dd>{{ engagement.active_weeks }}</dd>
+      {% if engagement.favorite_model %}<dt>Favorite model</dt><dd><code>{{ engagement.favorite_model }}</code></dd>{% endif %}
+    </dl>
+  </div>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Tags</h2>
+  <p class="muted" style="margin-bottom: 0.75rem;">
+    Labels for grouping accounts — a hiring cohort, an event batch, the internal
+    team. Lowercase letters, digits and dashes; anything else is normalised
+    (e.g. <code>Hiring 2026 08</code> becomes <code>hiring-2026-08</code>).
+    Tags are how the roster filter and the reporting queries pick a cohort out,
+    so prefer reusing an existing one over inventing a near-duplicate.
+  </p>
+  <div class="card">
+    {% if tags %}
+    <div class="tag-list">
+      {% for t in tags %}
+      <span class="tag-chip">{{ t }}
+        <form action="/admin/users/{{ target.id }}/tags/remove" method="post"
+              data-confirm="Remove the tag &quot;{{ t }}&quot; from {{ target.email }}?"
+              data-confirm-danger="false" data-confirm-label="Remove">
+          <input type="hidden" name="tag" value="{{ t }}">
+          <button type="submit" title="Remove {{ t }}" aria-label="Remove tag {{ t }}">&times;</button>
+        </form>
+      </span>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted" style="margin: 0;">No tags.</p>
+    {% endif %}
+    <form action="/admin/users/{{ target.id }}/tags/add" method="post" class="tag-add">
+      <input type="text" name="tag" maxlength="32" placeholder="e.g. hiring-2026-08"
+             list="known-tags" required style="width: 15rem;">
+      <datalist id="known-tags">
+        {% for t, n in known_tags %}<option value="{{ t }}">{{ n }} account{{ '' if n == 1 else 's' }}</option>{% endfor %}
+      </datalist>
+      <button type="submit" class="secondary">Add tag</button>
+    </form>
+  </div>
+</section>
+
+<section>
+  <h2>Notes</h2>
+  <p class="muted" style="margin-bottom: 0.75rem;">
+    Private admin notes — who this person is, why we approved them, outreach
+    touches. Convention: dated entries, newest on top
+    (e.g. <code>2026-07-31: met at HAAISS, works on SAE steering</code>).
+    Approving with a reason prepends an entry here automatically.
+  </p>
+  <div class="card">
+    <form action="/admin/users/{{ target.id }}/notes" method="post" style="max-width: none;">
+      <textarea name="notes" rows="6" maxlength="20000" style="width: 100%;"
+                placeholder="YYYY-MM-DD: …">{{ target.notes or '' }}</textarea>
+      <button type="submit" style="margin-top: 0.5rem;">Save notes</button>
+    </form>
+  </div>
+</section>
+
+<section>
+  <h2>Onboarding &amp; access</h2>
+  <div class="card">
+    <p style="margin-top: 0;">
+      Password:
+      {% if needs_password %}
+        <span class="pill status-pending">not set</span>
+      {% else %}
+        <span class="pill status-approved">set</span>
+      {% endif %}
+    </p>
+
+    {% if latest_approval_email %}
+    {% set em = latest_approval_email %}
+    <p class="muted" style="margin-bottom: 0.4rem;">
+      Last approval email: <strong>{{ em.send_status }}</strong>{% if em.skip_reason %} ({{ em.skip_reason }}){% endif %}
+      <span class="muted">· {{ em.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</span>
+    </p>
+    {% if em.send_status != 'sent' %}
+    <p class="error" style="margin-top: 0;">
+      The approval email was not delivered ({{ em.send_status }}{% if em.skip_reason %}: {{ em.skip_reason }}{% endif %}).
+      {% if needs_password %}This user can't sign in until they set a password — resend the link below and share it directly.{% endif %}
+    </p>
+    {% endif %}
+    {% endif %}
+
+    {% if target.status == 'approved' and needs_password %}
+    <form action="/admin/users/{{ target.id }}/resend-set-password" method="post" style="margin-top: 0.75rem;">
+      <button type="submit">Resend set-password link</button>
+    </form>
+    <p class="muted" style="font-size: 0.85rem; margin-top: 0.4rem;">
+      Mints a fresh single-use link and re-sends the approval email. This invalidates any set-password link already sent to the user.
+    </p>
+    {% endif %}
+
+    {% if set_password_link %}
+    <div style="margin-top: 0.9rem;">
+      <p style="margin-bottom: 0.3rem;"><strong>Single-use set-password link</strong> — copy and send it to the user (e.g. via Slack) if the email didn't arrive:</p>
+      <pre style="user-select: all; word-break: break-all; white-space: pre-wrap; margin: 0;"><code>{{ set_password_link }}</code></pre>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<section>
+  <h2>Aggregate budget</h2>
+  <p class="muted" style="margin-bottom: 0.75rem;">
+    Per-month total across all of this user's keys. Blank = unlimited (no aggregate cap).
+    This-month usage: <strong>{{ "{:,}".format(aggregate_used) }}</strong> tokens.
+  </p>
+  <form action="/admin/users/{{ target.id }}/budget" method="post" class="budget-form">
+    <label>Monthly aggregate budget
+      <input type="number" name="monthly_token_budget_total"
+             value="{{ target.monthly_token_budget_total if target.monthly_token_budget_total is not none else '' }}"
+             min="0" max="100000000000" placeholder="(blank = unlimited)">
+    </label>
+    <button type="submit">Save</button>
+  </form>
+</section>
+
+<section>
+  <h2>API keys <span class="muted">({{ keys|length }})</span></h2>
+  {% if keys %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Status</th>
+          <th>Monthly budget</th>
+          <th>Daily budget</th>
+          <th>Input cap</th>
+          <th>Output cap</th>
+          <th style="text-align:right;">This month</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in keys %}
+        {% set k = row.key %}
+        <tr class="key-row">
+          <td>
+            <code>{{ k.key_prefix }}…</code>
+            {% if k.name %}<div class="muted" style="font-size:0.82rem;">{{ k.name }}</div>{% endif %}
+          </td>
+          <td>
+            {% if k.revoked_at %}
+              <span class="pill revoked">revoked</span>
+            {% else %}
+              <span class="pill active">active</span>
+            {% endif %}
+          </td>
+          <td colspan="4">
+            <form action="/admin/keys/{{ k.id }}/budgets" method="post" class="budget-form">
+              <label>Monthly
+                <input type="number" name="monthly_token_budget"
+                       value="{{ k.monthly_token_budget }}" min="0" max="100000000000">
+              </label>
+              <label>Daily
+                <input type="number" name="daily_token_budget"
+                       value="{{ k.daily_token_budget if k.daily_token_budget is not none else '' }}"
+                       min="0" max="100000000000" placeholder="—">
+              </label>
+              <label>Input
+                <input type="number" name="monthly_input_token_budget"
+                       value="{{ k.monthly_input_token_budget if k.monthly_input_token_budget is not none else '' }}"
+                       min="0" max="100000000000" placeholder="—">
+              </label>
+              <label>Output
+                <input type="number" name="monthly_output_token_budget"
+                       value="{{ k.monthly_output_token_budget if k.monthly_output_token_budget is not none else '' }}"
+                       min="0" max="100000000000" placeholder="—">
+              </label>
+              <button type="submit" class="small">Save</button>
+            </form>
+          </td>
+          <td style="text-align:right;">{{ "{:,}".format(row.this_month) }}</td>
+          <td>
+            {% if not k.revoked_at %}
+            <form action="/admin/keys/{{ k.id }}/revoke-web" method="post"
+                  data-confirm="Revoke this key? The user will lose API access through it."
+                  data-confirm-label="Revoke key">
+              <button type="submit" class="ghost small">Revoke</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No keys yet.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Email history <span class="muted">({{ email_history|length }})</span></h2>
+  {% if email_history %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Kind</th><th>Subject</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for em in email_history %}
+        <tr>
+          <td class="muted" style="white-space: nowrap;">{{ em.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ em.kind }}</td>
+          <td>{{ em.subject }}</td>
+          <td>
+            <span class="pill {% if em.send_status == 'sent' %}status-approved{% elif em.send_status == 'failed' %}status-rejected{% else %}status-pending{% endif %}">{{ em.send_status }}</span>
+            {% if em.last_event %}<span class="muted" style="font-size: 0.82rem;">{{ em.last_event }}</span>{% endif %}
+          </td>
+          <td><a href="/admin/emails/{{ em.id }}">View →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" style="font-size: 0.85rem;">App-sent email only (approval, invites, resets, bulk) — personal Gmail/Discord outreach belongs in Notes.</p>
+  {% else %}
+  <p class="muted">No emails sent to this user yet.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Feedback <span class="muted">({{ feedback_items|length }})</span></h2>
+  {% if feedback_items %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Category</th><th>Status</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        {% for fb in feedback_items %}
+        <tr>
+          <td class="muted" style="white-space: nowrap;">{{ fb.created_at.strftime('%Y-%m-%d') }}</td>
+          <td>{{ fb.category }}</td>
+          <td><span class="pill {% if fb.status == 'resolved' %}status-approved{% else %}status-pending{% endif %}">{{ fb.status }}</span></td>
+          <td style="max-width: 30rem; overflow-wrap: anywhere;">{{ fb.description | truncate(200) }} <a href="/admin/feedback">→</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No feedback submitted.</p>
+  {% endif %}
+</section>
+
+{% if target.id != user.id %}
+<section>
+  <h2>Danger zone</h2>
+  <div class="card">
+    <p style="margin-top: 0;">
+      Permanently delete this user. Their API keys, sessions, password resets,
+      chat sessions, and per-request/usage history are removed. Feedback and
+      email logs are kept but their attribution is dropped. <strong>This cannot be undone.</strong>
+    </p>
+    <form action="/admin/users/{{ target.id }}/delete" method="post"
+          data-confirm="Delete {{ target.email }}? This permanently removes the user and their API keys."
+          data-confirm-label="Delete user">
+      <button type="submit" class="danger">Delete user</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

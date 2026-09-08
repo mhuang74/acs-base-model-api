@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block title %}Uptime — ACS Infra{% endblock %}
+{% block head_extra %}
+<style>
+  .status-pending { background: var(--warn-bg); color: var(--accent-2); border-color: var(--warn-border); }
+  .status-approved { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+  .status-rejected { background: var(--error-bg); color: var(--error); border-color: var(--error-border); }
+  @media (max-width: 760px) {
+    section input[name="cron_expression"] { min-width: 0 !important; width: 100% !important; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Uptime</h1>
+<p class="lead" style="margin-bottom: 2rem;">
+  Capacity probe — periodic H200 availability checks.
+  <a href="/admin">Back to admin menu</a>.
+</p>
+
+{% if flash_message %}
+  <p class="pill status-approved" style="display:inline-block;">{{ flash_message }}</p>
+{% endif %}
+{% if flash_error %}
+  <p class="pill status-rejected" style="display:inline-block;">{{ flash_error }}</p>
+{% endif %}
+
+<section style="margin-bottom: 2.5rem;">
+  <h2>Per-model availability</h2>
+  <p class="muted" style="margin-bottom: 0.75rem; max-width: 60rem;">
+    Computed from <code>api_requests</code> rows. <strong>Uptime %</strong> is
+    successes (<code>status&nbsp;&lt;&nbsp;400</code> AND no <code>error_kind</code>)
+    divided by requests that count as service load — <strong>cold-boot</strong>
+    rows and caller errors (<strong>401 / 403 / 429</strong>) are excluded from the
+    denominator. <strong>MTTR</strong> is the mean recovery time across contiguous
+    runs of <code>error_kind=&quot;circuit_open&quot;</code> rows; an open run with
+    no recovery yet is shown in the list but excluded from the average.
+  </p>
+  {% if availability.rows %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>model</th>
+          {% for label in availability.window_labels %}
+            <th style="text-align:right;">uptime % ({{ label }})</th>
+            <th style="text-align:right;">requests ({{ label }})</th>
+            <th style="text-align:right;">downtime windows ({{ label }})</th>
+            <th style="text-align:right;">MTTR ({{ label }})</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in availability.rows %}
+        <tr>
+          <td><code>{{ row.model_id }}</code></td>
+          {% for label in availability.window_labels %}
+            {% set a = row.per_window[label] %}
+            <td style="text-align:right;">
+              {% if a.uptime_pct is not none %}
+                {% if a.uptime_pct >= 0.99 %}
+                  <span class="pill status-approved">{{ "%.2f%%"|format(a.uptime_pct * 100) }}</span>
+                {% elif a.uptime_pct >= 0.95 %}
+                  <span class="pill status-pending">{{ "%.2f%%"|format(a.uptime_pct * 100) }}</span>
+                {% else %}
+                  <span class="pill status-rejected">{{ "%.2f%%"|format(a.uptime_pct * 100) }}</span>
+                {% endif %}
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td style="text-align:right;">
+              <span class="muted">{{ a.successes }} / {{ a.denominator }}</span>
+              {% if a.total_requests != a.denominator %}
+                <br><small class="muted">{{ a.total_requests - a.denominator }} excl.</small>
+              {% endif %}
+            </td>
+            <td style="text-align:right;">
+              {{ a.downtime_windows|length }}
+              {% set open_count = a.downtime_windows|selectattr("end_ts", "none")|list|length %}
+              {% if open_count %}
+                <br><small class="pill status-rejected">{{ open_count }} still open</small>
+              {% endif %}
+            </td>
+            <td style="text-align:right;">
+              {% if a.mttr_s is not none %}
+                {{ "%.0fs"|format(a.mttr_s) }}
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No models have served traffic in the last 7 days.</p>
+  {% endif %}
+</section>
+
+{% if data_volume is not none %}
+<section style="margin-bottom: 2.5rem;">
+  <h2>Data volume</h2>
+  <p class="muted" style="margin-bottom: 0.75rem; max-width: 60rem;">
+    No pruning during beta (ACS-26 #4) — surfaced here so a growth issue
+    doesn't sneak up on Postgres disk.
+  </p>
+  <p>
+    <code>api_requests</code> rows:
+    <strong>{{ "{:,}".format(data_volume.row_count) }}</strong>
+    &nbsp;·&nbsp;
+    table size:
+    <strong>
+      {% set mb = data_volume.size_bytes / 1024 / 1024 %}
+      {% if mb >= 1024 %}{{ "%.2f GB"|format(mb / 1024) }}{% else %}{{ "%.1f MB"|format(mb) }}{% endif %}
+    </strong>
+    <small class="muted">(includes indexes + TOAST)</small>
+  </p>
+</section>
+{% endif %}
+
+<section>
+  <h2>Capacity probe</h2>
+  <p class="muted" style="margin-bottom: 0.75rem; max-width: 60rem;">
+    Periodically requests an <strong>8×H200</strong> container on Modal and records
+    whether the allocation succeeded and how long it took. <strong>8×H200 is the shape
+    Trinity-Large-TrueBase, Llama-3.1-405B, and Kimi-K2-Base all need</strong>, so a
+    successful probe means any of those models can be cold-booted right now. Trinity
+    is currently the model that surfaces H200 capacity issues most often, but the
+    probe itself isn't Trinity-specific. Fired by APScheduler in this wrapper
+    service (not Modal's own cron), which is why the schedule is editable here
+    without a Modal redeploy.
+  </p>
+  <form action="/admin/probe/schedule" method="post" style="margin-bottom: 0.25rem;">
+    <label>Cron expression (UTC):
+      <input type="text" name="cron_expression" value="{{ probe.cron_expression }}" style="font-family: monospace; min-width: 18rem;" />
+    </label>
+    <button type="submit">Save</button>
+  </form>
+  <small class="muted" style="display:block; margin-bottom: 0.75rem; max-width: 60rem;">
+    Standard 5-field cron (UTC): <code>minute hour day-of-month month day-of-week</code>.
+    Default <code>0 7,10,14,16,19,23 * * *</code> fires six times per day at 07:00, 10:00,
+    14:00, 16:00, 19:00, and 23:00 UTC. Each fire boots an 8×H200 container for ~1 min
+    (~$0.60 per fire, ~$3.60/day on the default schedule). Use <code>*/N * * * *</code>
+    for "every N minutes" if you want denser sampling during an investigation.
+  </small>
+  <form action="/admin/probe/trigger" method="post" style="margin-top:0.25rem; margin-bottom: 0.25rem;">
+    <button type="submit">Trigger now</button>
+  </form>
+  <small class="muted" style="display:block; margin-bottom: 1rem; max-width: 60rem;">
+    <strong>Trigger now</strong> — fires a one-off probe immediately, outside the schedule.
+    Useful before deploying a large model to check whether H200 capacity is currently
+    constrained.
+  </small>
+
+  <h3>Recent runs</h3>
+  {% if probe.results %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>fired_at</th>
+          <th>ok</th>
+          <th style="text-align:right;">elapsed</th>
+          <th>gpu</th>
+          <th>placement</th>
+          <th style="text-align:right;">count</th>
+          <th style="text-align:right;">utilization</th>
+          <th style="text-align:right;">memory</th>
+          <th style="text-align:right;">temp</th>
+          <th style="text-align:right;">power</th>
+          <th>driver</th>
+          <th>error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in probe.results %}
+        <tr>
+          <td class="muted">{{ r.fired_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
+          <td>
+            {% if r.ok %}
+              <span class="pill status-approved">ok</span>
+            {% else %}
+              <span class="pill status-rejected">fail</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right;">{{ "%.1fs"|format(r.elapsed_s or 0) }}</td>
+          <td>{{ r.gpu_type or "—" }}</td>
+          <td>
+            {% if r.cloud or r.region %}
+              {{ r.cloud or "—" }} / {{ r.region or "—" }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td style="text-align:right;">{{ r.gpu_count or "—" }}</td>
+          <td style="text-align:right;">
+            {% if r.gpu_utilization_pct is not none %}
+              {{ "%.1f%% (±%.1f)"|format(r.gpu_utilization_pct, r.gpu_utilization_std_pct or 0) }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if r.gpu_memory_used_mb is not none and r.gpu_memory_total_mb is not none %}
+              {{ "%.1f / %.1f GB"|format(r.gpu_memory_used_mb / 1024, r.gpu_memory_total_mb / 1024) }}
+              <br>
+              <small class="muted">
+                ±{{ "%.1f / %.1f GB"|format((r.gpu_memory_used_std_mb or 0) / 1024, (r.gpu_memory_total_std_mb or 0) / 1024) }}
+              </small>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if r.gpu_temperature_c is not none %}
+              {{ "%.1f°C (±%.1f)"|format(r.gpu_temperature_c, r.gpu_temperature_std_c or 0) }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if r.gpu_power_w is not none %}
+              {{ "%.1f W (±%.1f)"|format(r.gpu_power_w, r.gpu_power_std_w or 0) }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ r.driver_version or "—" }}</td>
+          <td class="muted">{{ r.error or "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No probe runs yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
