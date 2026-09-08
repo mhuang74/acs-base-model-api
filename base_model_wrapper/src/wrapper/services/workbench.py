@@ -12,7 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import modal_ops as modalops
 from ..logging import get_logger
-from ..models import ApiKey, ChatGeneration, ChatSession, ChatSnapshot, ModelWarmWindow
+from ..models import (
+    ApiKey,
+    ChatGeneration,
+    ChatSession,
+    ChatSnapshot,
+    CompareSnapshot,
+    ModelWarmWindow,
+)
 
 log = get_logger()
 
@@ -266,6 +273,67 @@ async def running_generation_for_session(
             .where(ChatGeneration.session_id == session_id)
             .where(ChatGeneration.status == "running")
             .order_by(ChatGeneration.started_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def composer_settings_from_run(snap: ChatSnapshot) -> dict[str, Any]:
+    """Shape one Run's recorded Sampling settings for the composer restore.
+
+    NULL columns mean "never recorded" (pre-migration rows, or a knob the Run
+    genuinely left unset — the two are indistinguishable and both restore as
+    the built-in defaults per the Restore chain decision). ``seed`` keeps its
+    blank-means-random UI semantics: None → empty string.
+    """
+    return {
+        "max_tokens": snap.max_tokens,
+        "temperature": snap.temperature,
+        "top_p": snap.top_p,
+        "top_k": snap.top_k,
+        "min_p": snap.min_p,
+        "presence_penalty": snap.presence_penalty,
+        "frequency_penalty": snap.frequency_penalty,
+        "repetition_penalty": snap.repetition_penalty,
+        "seed": (str(snap.seed) if snap.seed is not None else ""),
+        "stop": snap.stop or "",
+        "logprobs_on": snap.logprobs_count is not None,
+        "logprobs_count": (snap.logprobs_count if snap.logprobs_count is not None else 5),
+        "recorded_incomplete": snap.recorded_incomplete,
+    }
+
+
+async def latest_restore_run(
+    session: AsyncSession, session_id: uuid.UUID
+) -> ChatSnapshot | None:
+    """The Session's most recent successful Run — the Restore chain's second
+    authority.
+
+    Successful means committed with the completion non-cancelled: a cancelled
+    Run commits a record (existing behaviour) but must NOT feed the fallback —
+    abandoning a bad attempt shouldn't change the user's defaults. Errored
+    generations never commit a ChatSnapshot at all, so they fall out naturally.
+    """
+    return (
+        await session.execute(
+            select(ChatSnapshot)
+            .where(ChatSnapshot.session_id == session_id, ChatSnapshot.cancelled.is_(False))
+            .order_by(ChatSnapshot.ts.desc(), ChatSnapshot.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def latest_compare_snapshot(
+    session: AsyncSession, session_id: uuid.UUID
+) -> CompareSnapshot | None:
+    """The Session's most recent Compare snapshot — the compare pane's lane
+    prefill source (issue #12). None when the Session never compared."""
+    return (
+        await session.execute(
+            select(CompareSnapshot)
+            .where(CompareSnapshot.session_id == session_id)
+            .order_by(CompareSnapshot.ts.desc(), CompareSnapshot.id.desc())
             .limit(1)
         )
     ).scalar_one_or_none()

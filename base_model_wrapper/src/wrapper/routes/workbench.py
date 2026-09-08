@@ -242,6 +242,8 @@ async def _render_chat(
     running_generation: ChatGeneration | None = None,
     session: AsyncSession | None = None,
     mode: str = "single",
+    composer_settings: dict[str, Any] | None = None,
+    compare_prefill: list[dict[str, Any]] | None = None,
 ):
     # Compare-mode prompt prefill (issue #11): the session prompt is a rolling
     # continuation buffer by design, so it holds prompt + completion after a
@@ -338,6 +340,14 @@ async def _render_chat(
                 if running_generation is not None
                 else None
             ),
+            # Restore chain (issue #12): composer Sampling settings resolved
+            # server-side (None → template falls back to built-in defaults).
+            "composer_settings": composer_settings,
+            # Compare-pane lane prefill: the most recent Compare snapshot's lane
+            # configs (None → compare JS seeds its default two lanes). Pure
+            # render logic — lane configs are persisted on the unified Run record
+            # already.
+            "compare_prefill_lanes": compare_prefill,
         },
         status_code=status_code,
     )
@@ -469,6 +479,25 @@ async def chat_open(
     sidebar = await _user_chat_sessions(session, user.id)
     snapshots = await _session_snapshots(session, chat.id)
     keys = await _workbench_keys(session, user.id)
+    composer_settings = None
+    compare_prefill = None
+    # Compare prefill (issue #12): lanes prefill from the most recent Compare
+    # snapshot of the Session (lane configs as saved at Run-all). Falls back to
+    # the compare JS's built-in two default lanes when none exists. The stored
+    # completion text is NOT restored into the lane outputs on a page load —
+    # that stays the history "Restore" button's job; prefill is config only.
+    latest_cmp = await workbench_svc.latest_compare_snapshot(session, chat.id)
+    if latest_cmp is not None:
+        compare_prefill = list(latest_cmp.lanes or [])
+    # Restore chain (issue #12): the composer's Sampling settings resolve Draft
+    # (client-side, from the URL) → most recent successful Run → defaults. The
+    # server owns leg 2 — cancelled Runs are excluded (they commit records but
+    # don't feed the fallback) — and renders the resolved values so the composer
+    # pre-fills even before any JS runs. Model + API key keep their existing
+    # chat-row restore (model via selected_model_id, key via selected_key_id).
+    last_run = await workbench_svc.latest_restore_run(session, chat.id)
+    if last_run is not None:
+        composer_settings = workbench_svc.composer_settings_from_run(last_run)
     # Which key the picker pre-selects: the chat's saved choice if it's still
     # selectable, otherwise the newest active key (keys[0]) — same default as
     # primary_authed_caller, so behaviour is unchanged for chats that never
@@ -496,6 +525,8 @@ async def chat_open(
         running_generation=running_gen,
         session=session,
         mode=mode,
+        composer_settings=composer_settings,
+        compare_prefill=compare_prefill,
     )
 
 

@@ -464,11 +464,14 @@ class Loom(Base):
 
 
 class ChatSnapshot(Base):
-    """One row per ``Continue`` generation, capturing the state for revert.
+    """One Run (single-pane ``Continue``), capturing the state for revert.
 
-    ``prompt_before`` is what we sent upstream; ``completion_text`` is what
-    came back (possibly partial when ``cancelled=True``). Reverting a session
-    to a snapshot resets ``chat_sessions.prompt_text`` to ``prompt_before``.
+    The glossary term for every row here (and in ``chat_generations`` /
+    ``compare_snapshots`` lanes) is a **Run**: one completion request and its
+    recorded outcome. ``prompt_before`` is what we sent upstream;
+    ``completion_text`` is what came back (possibly partial when
+    ``cancelled=True``). Reverting a session to a Run resets
+    ``chat_sessions.prompt_text`` to ``prompt_before``.
     """
 
     __tablename__ = "chat_snapshots"
@@ -498,6 +501,38 @@ class ChatSnapshot(Base):
     # (legacy rows, or the logprobs toggle was off) — the UI then shows plain
     # text. Populated server-side from the streamed chunks (ACS-189).
     logprobs: Mapped[list | None] = mapped_column(JSONB)
+    # --- Run record: extended Sampling settings (issue #12, migration 0046) ---
+    # NULL means "unset": historical rows keep NULLs (no backfill — backfilled
+    # defaults would lie about what actually ran), and pre-migration Rows render
+    # defaults-with-placeholder and carry the ``recorded_incomplete`` marker.
+    # These mirror the clamped vLLM request body ``_build_lane_body`` shaped at
+    # launch, so the recorded recipe is exactly what the upstream saw.
+    top_p: Mapped[float | None] = mapped_column(Float)
+    top_k: Mapped[int | None] = mapped_column(Integer)
+    min_p: Mapped[float | None] = mapped_column(Float)
+    presence_penalty: Mapped[float | None] = mapped_column(Float)
+    frequency_penalty: Mapped[float | None] = mapped_column(Float)
+    repetition_penalty: Mapped[float | None] = mapped_column(Float)
+    # Seed is recorded ONLY when the user explicitly set one (blank seed keeps
+    # today's meaning: the upstream drew randomly — vLLM never echoes it back).
+    seed: Mapped[int | None] = mapped_column(BigInteger)
+    # Single stop sequence as typed (upstream gets ``[stop]``). NULL = none set.
+    stop: Mapped[str | None] = mapped_column(Text)
+    # Logprobs toggle + count: ``logprobs`` JSONB non-NULL above implies the
+    # toggle was on, but the requested top-k count is only meaningful as its own
+    # datum for restore/export, so it's recorded here. NULL = toggle was off.
+    logprobs_count: Mapped[int | None] = mapped_column(Integer)
+    # Completeness marker: False (the default) means every extended setting was
+    # captured; True marks pre-migration rows and v1-imported Runs, whose
+    # extended settings were never recorded (they restore as defaults).
+    recorded_incomplete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    # The model string the upstream completion response echoed back (vLLM
+    # returns its ``served_model_name`` per chunk). Recorded alongside the
+    # requested short id (``model``) so a Run knows both identities; NULL on
+    # legacy rows and when the upstream never echoed one.
+    model_echo: Mapped[str | None] = mapped_column(Text)
 
     session: Mapped[ChatSession] = relationship(back_populates="snapshots")
 
