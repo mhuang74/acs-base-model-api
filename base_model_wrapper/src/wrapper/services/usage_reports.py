@@ -14,6 +14,7 @@ returned.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import uuid
 from typing import Any
 
@@ -382,3 +383,177 @@ async def build_usage_context(
         "per_endpoint": per_endpoint,
         "recent_requests": recent_requests,
     }
+
+
+# --- monthly per-model usage report (CSV download) ----------------------------
+#
+# The report (issue #10; ADR 0001 for the data source) aggregates the *request
+# log* over a UTC usage month rather than the usage rollups: rollups are keyed
+# (key, period) with no model column, and a hot-path schema change would be
+# disproportionate to a human-facing report. Consequences recorded in ADR 0001
+# bind this feature: report history depends on request-log retention staying
+# unpruned, and deleting a key cascades away its historical rows (a
+# re-downloaded month can silently shrink).
+
+_MONTH_PARAM_RE = re.compile(r"(\d{4})-(\d{2})")
+
+
+def _previous_month_start(ref: dt.date) -> dt.date:
+    """First day of the calendar month before ``ref``'s (UTC usage months)."""
+    return (ref - dt.timedelta(days=1)).replace(day=1)
+
+
+def default_report_month() -> dt.date:
+    """The report month pre-selected in the picker: the previous month.
+
+    Always the previous month, even when it has no rollup rows yet (a
+    researcher asking on the 2nd still gets "last month's report" in one
+    click; downloading yields a header-only CSV) — issue #10.
+    """
+    return _previous_month_start(authmod._current_period_start())
+
+
+def _month_bounds(month: dt.date) -> tuple[dt.datetime, dt.datetime]:
+    """Half-open UTC window for a usage month: ``[first instant, next first)``."""
+    start = dt.datetime.combine(month, dt.time.min, tzinfo=dt.UTC)
+    if month.month == 12:
+        next_first = dt.date(month.year + 1, 1, 1)
+    else:
+        next_first = dt.date(month.year, month.month + 1, 1)
+    return start, dt.datetime.combine(next_first, dt.time.min, tzinfo=dt.UTC)
+
+
+def _parse_month(raw: dt.date | str | None) -> dt.date | None:
+    """Normalise a report month (``"YYYY-MM"`` query param, or a parsed date).
+
+    Unparseable input returns ``None`` so callers fall back to the default
+    month instead of erroring (issue #10: a bad ``?month=`` is never a 400).
+    """
+    if raw is None or isinstance(raw, dt.date):
+        return raw
+    match = _MONTH_PARAM_RE.fullmatch(raw.strip())
+    if match is None:
+        return None
+    try:
+        return dt.date(int(match[1]), int(match[2]), 1)
+    except ValueError:
+        return None
+
+
+async def usage_report_months(session: AsyncSession, user: User) -> list[dt.date]:
+    """Usage months the report picker offers, newest first.
+
+    The distinct months present in the user's rollups (each proves successful
+    usage) plus the current partial month and the previous month — the
+    previous month is always offered because it is the default (a researcher
+    asking on the 2nd still gets one click; downloading it yields a
+    header-only CSV) — issue #10.
+    """
+    rollup_months = set(
+        (
+            await session.execute(
+                select(UsageMonthly.period_start)
+                .join(ApiKey, ApiKey.id == UsageMonthly.key_id)
+                .where(ApiKey.user_id == user.id)
+                .distinct()
+            )
+        ).scalars()
+    )
+    current = authmod._current_period_start()
+    return sorted({*rollup_months, current, _previous_month_start(current)}, reverse=True)
+
+
+async def build_usage_report(
+    session: AsyncSession,
+    user: User,
+    *,
+    month: dt.date | str | None = None,
+) -> dict[str, Any]:
+    """Build the monthly per-model usage report for one user (issue #10).
+
+    Returns a plain structure the route renders to CSV (a future admin export
+    can reuse it): ``{"month": chosen, "months": offered newest-first,
+    "rows": [...]}``.
+
+    Rows are one per (model, key) pair with contributing usage, covering
+    *every* key the user owns — revoked and disabled included, so totals tie
+    out to budget accounting; the page's ``?key=`` filter never scopes a
+    download. Keys are ordered oldest-first (matching the /usage per-key
+    table); models within a key by total tokens descending, with the ``NULL``
+    model bucket last (the CSV layer renders it ``(unknown)``).
+
+    Row semantics match how the rollups are written: a request contributes
+    only when its prompt + completion token counts are positive (usage
+    commits fire on the same predicate), so CSV column totals equal the
+    monthly totals the /usage page shows for the same month. Harvest submits
+    token-less log rows by design, so harvest usage never appears here.
+    """
+    months = await usage_report_months(session, user)
+    chosen = _parse_month(month)
+    if chosen is None or chosen not in months:
+        # Unparseable or not-offered month falls back to the default (the
+        # previous month) rather than erroring (issue #10).
+        chosen = default_report_month()
+
+    key_rows = list(
+        (
+            await session.execute(
+                select(ApiKey).where(ApiKey.user_id == user.id).order_by(ApiKey.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows: list[dict[str, Any]] = []
+    if key_rows:
+        window_start, window_end = _month_bounds(chosen)
+        agg_rows = (
+            await session.execute(
+                select(
+                    ApiRequest.key_id,
+                    ApiRequest.model,
+                    func.coalesce(func.sum(ApiRequest.n_prompt), 0),
+                    func.coalesce(func.sum(ApiRequest.n_completion), 0),
+                    func.count(),
+                )
+                .where(
+                    ApiRequest.key_id.in_([k.id for k in key_rows]),
+                    ApiRequest.ts >= window_start,
+                    ApiRequest.ts < window_end,
+                    # Tokenized successes only — the same positive-token
+                    # predicate under which usage is committed to the rollups,
+                    # so CSV totals tie out to the /usage page. This is the
+                    # report's tie-out contract (issue #10, stories 13/18).
+                    func.coalesce(ApiRequest.n_prompt, 0)
+                    + func.coalesce(ApiRequest.n_completion, 0)
+                    > 0,
+                )
+                .group_by(ApiRequest.key_id, ApiRequest.model)
+            )
+        ).all()
+
+        agg_by_key: dict[uuid.UUID, list[tuple[str | None, int, int, int]]] = {}
+        for key_id, model, prompt, completion, requests in agg_rows:
+            agg_by_key.setdefault(key_id, []).append(
+                (model, int(prompt or 0), int(completion or 0), int(requests or 0))
+            )
+
+        for key in key_rows:
+            # Models within a key: heaviest total first; named models
+            # alphabetically on ties, the (unknown) bucket last.
+            entries = agg_by_key.get(key.id, [])
+            entries.sort(key=lambda e: (-(e[1] + e[2]), e[0] is None, e[0] or ""))
+            for model, prompt, completion, requests in entries:
+                rows.append(
+                    {
+                        "key_name": key.name,
+                        "key_prefix": key.key_prefix,
+                        "model": model,
+                        "prompt_tokens": prompt,
+                        "completion_tokens": completion,
+                        "total_tokens": prompt + completion,
+                        "requests": requests,
+                    }
+                )
+
+    return {"month": chosen, "months": months, "rows": rows}

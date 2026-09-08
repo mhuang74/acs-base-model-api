@@ -147,6 +147,19 @@
   .key-filter .filter-go { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
   .key-filter .filter-scope { color: var(--muted); font-size: 0.85rem; }
   .key-filter .filter-scope a { font-weight: 500; }
+  .report-download {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    max-width: 100%;
+    margin: -1.25rem 0 1.75rem;
+  }
+  .report-download label { flex-direction: row; align-items: center; font-weight: 500; }
+  .report-download select { margin: 0; min-width: 11rem; max-width: 100%; }
+  .report-download .filter-go { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+  .report-download .filter-scope { color: var(--muted); font-size: 0.85rem; }
 </style>
 {% endblock %}
 {% block content %}
@@ -185,6 +198,24 @@
   {% if selected_key_id %}
   <span class="filter-scope">Scoped to <strong>{{ selected_key_name }}</strong> · <a href="/usage">show all keys</a></span>
   {% endif %}
+</form>
+
+{# ---- monthly usage report download --------------------------------------- #}
+{# A GET form to /usage/report.csv: pick a month, download the CSV. Deliberately
+   outside the key-filter form above — a download always covers ALL the user's
+   keys (issue #10), so it must not submit inside the ?key= scoping form. #}
+<form class="report-download" method="get" action="/usage/report.csv">
+  <label for="report-month">Download
+    <select name="month" id="report-month">
+      {% for m in report_months %}
+      <option value="{{ m.strftime('%Y-%m') }}"{% if m.strftime('%Y-%m') == default_report_month %} selected{% endif %}>
+        {{ m.strftime('%B %Y') }}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit" class="secondary filter-go">Download CSV</button>
+  <span class="filter-scope">per model, all keys</span>
 </form>
 
 {# ---- headline stat cards ------------------------------------------------- #}
