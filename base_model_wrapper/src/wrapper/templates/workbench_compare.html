@@ -367,7 +367,12 @@
   Shared prompt
   <textarea id="cmp-prompt" class="cmp-prompt-textarea" rows="6" autocomplete="off"
             spellcheck="false" placeholder="The capital of France is"
-            {% if no_key %}disabled{% endif %}>{{ chat.prompt_text }}</textarea>
+            {% if no_key %}disabled{% endif %}>{{ compare_prompt }}</textarea>
+  {# Roll-forward boundary (issue #11), server-computed: non-null only when the
+     session prompt is EXACTLY the latest snapshot's prompt_before + completion.
+     The mode toggle substitutes the baseline for Compare and skips the copy-back
+     to Single while the single textarea still holds the roll-forward. #}
+  <script id="cmp-roll-forward" type="application/json">{{ compare_roll_forward | tojson }}</script>
 </label>
 
 <div class="cmp-toolbar">

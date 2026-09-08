@@ -2590,6 +2590,16 @@
           // Server now renders no snapshots (unexpected, but stay consistent).
           current.remove();
         }
+        // Issue #11: after a single-pane run the roll-forward boundary
+        // (baseline / completion split, embedded server-side for the mode
+        // toggle) changes too. Swap the fresh #cmp-roll-forward script in —
+        // the toggle parses it fresh on every sync, so no event is needed.
+        // Fail soft like every other step above.
+        const freshRf = doc.getElementById('cmp-roll-forward');
+        const currentRf = document.getElementById('cmp-roll-forward');
+        if (freshRf && currentRf) {
+          currentRf.textContent = freshRf.textContent;
+        }
       }
       // Test hook: lets the Playwright suite drive the refresh without a real
       // upstream stream (there's no Modal locally). Not used by app code.
@@ -2618,14 +2628,32 @@
       const single = document.getElementById('wb-prompt');
       const compare = document.getElementById('cmp-prompt');
       let lastSynced = compare ? compare.value : '';
+      // Server-computed roll-forward boundary (issue #11): non-null only when
+      // the session prompt is EXACTLY the latest snapshot's baseline +
+      // completion — the unmodified roll-forward. Single-pane streaming
+      // appends the completion client-side, so after a run the textarea holds
+      // exactly this text. Parsed FRESH on every sync: refreshSnapshots()
+      // swaps the embedded script after a completed run, so a cached value
+      // would go stale. Null when the session prompt isn't an unmodified
+      // roll-forward (edits, restore, fresh typing, no snapshot).
+      function rollForward() {
+        try {
+          const rfEl = document.getElementById('cmp-roll-forward');
+          const parsed = rfEl ? JSON.parse(rfEl.textContent) : null;
+          return (parsed && typeof parsed.baseline === 'string') ? parsed : null;
+        } catch (_) {
+          return null;
+        }
+      }
 
-      function copyPrompt(src, dst) {
-        if (dst.value !== src.value) {
-          dst.value = src.value;
+      function copyPrompt(src, dst, value) {
+        const next = (typeof value === 'string') ? value : src.value;
+        if (dst.value !== next) {
+          dst.value = next;
           // Let the destination pane's own listeners (autosize, previews) react.
           dst.dispatchEvent(new Event('input', { bubbles: true }));
         }
-        lastSynced = src.value;
+        lastSynced = next;
       }
 
       function singleIsStreaming() {
@@ -2636,13 +2664,27 @@
       function syncPrompt(fromMode) {
         if (!single || !compare) return;
         if (fromMode === 'compare') {
-          // Leave lastSynced untouched when skipping: compare is still ahead
-          // of single, and the next non-streaming switch should sync it.
+          // Copy-back (Compare → Single) skips while the single textarea still
+          // holds the unmodified roll-forward — returning must never discard
+          // the completion tail. Once edited, compare text copies back as before.
+          const rf = rollForward();
+          const skip = rf !== null &&
+            single.value === rf.baseline + rf.completion;
+          if (skip) {
+            lastSynced = compare.value;
+            return;
+          }
           if (compare.value !== lastSynced && !singleIsStreaming()) {
             copyPrompt(compare, single);
           }
         } else if (!singleIsStreaming()) {
-          copyPrompt(single, compare);
+          // Forward (Single → Compare): when the textarea holds the unmodified
+          // roll-forward, substitute the prompt baseline. Any other content
+          // (post-run edits, fresh typing) copies as-is.
+          const rf = rollForward();
+          const isRoll = rf !== null &&
+            single.value === rf.baseline + rf.completion;
+          copyPrompt(single, compare, isRoll ? rf.baseline : undefined);
         }
       }
 
