@@ -105,6 +105,29 @@ No CI, no mypy/coverage config — don't invent typecheck/coverage commands. All
 - **Docker** for local Postgres (`postgres:16`, container `acs-hiring-devdb`, pg/pg on 5434); dev credentials are non-secret placeholders.
 - Env vars: see `setup-dev.sh` (dev defaults) and `base_model_wrapper/.env.example` / root `.env.example` (runtime/Modal side). `materials/`, `scratchpad/`, `notebooks/` are gitignored local working areas — never commit them.
 
+## Testing the Live App (dev credentials)
+
+For testing the web app and API endpoints against the running dev server
+(started via `./setup-dev.sh up`; defaults: app on 5173, stub on 8900, DB on 5434):
+
+```
+Web UI:   http://localhost:5173/  (Workbench, Loom, Compare)
+login:    candidate@example.com / devpassword12345
+API key:  acs-bm-mvtlb5ck-lyqYfbKB8MwZ_oKxBolpvnt-C5x3iYwFmdmrFKWUrCo
+```
+
+- **Web UI (cookie session)**: POST `email`/`password` form fields to
+  `http://localhost:5173/login` (rate-limited 5/minute), then reuse the
+  `acs_session` cookie for authed GETs/POSTs (dashboard, workbench, loom, ...).
+  A plain POST returns 303 → `/dashboard` with the cookie set; follow it with the cookie.
+- **API (bearer key)**: `Authorization: Bearer <API key>` header, e.g.
+  `curl -s http://localhost:5173/v1/completions -H 'Authorization: Bearer <key>' \
+  -H 'Content-Type: application/json' -d '{"model":"llama-8b","prompt":"hello","max_tokens":16}'`.
+  `/v1/models` is a cheap reachability/auth check. Key minting: `./setup-dev.sh key`.
+- These are non-secret local dev credentials (seeded by `setup-dev.sh`; env knobs
+  `DEV_EMAIL`/`DEV_PASSWORD`, default key name `take-home`). If login fails with a
+  valid dev server, re-seed with `./setup-dev.sh login`.
+
 ## Testing & QA
 
 - Framework: **pytest ≥8.3 + pytest-asyncio** (`asyncio_mode = "auto"`), `testpaths = ["tests"]` in `base_model_wrapper/pyproject.toml`. `respx` for HTTP stubbing (dev-extra-only: `test_sse_routing.py` silently self-skips without it). No coverage config.
