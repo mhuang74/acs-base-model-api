@@ -70,23 +70,39 @@ def test_sse_done_frame_shape():
     assert b'"status": "completed"' in frame
 
 
-def test_absorb_chunk_text_extracts_delta_and_done():
+def test_absorb_chunk_text_extracts_delta_done_and_model_echo():
     from wrapper.main import _absorb_chunk_text
     chunk = (
-        b'data: {"choices":[{"text":"hel"}]}\n\n'
-        b'data: {"choices":[{"text":"lo"}]}\n\n'
+        b'data: {"model":"gpt2-served","choices":[{"text":"hel"}]}\n\n'
+        b'data: {"model":"gpt2-served","choices":[{"text":"lo"}]}\n\n'
         b"data: [DONE]\n\n"
     )
-    delta, saw_done = _absorb_chunk_text(chunk)
+    delta, saw_done, echo = _absorb_chunk_text(chunk)
     assert delta == "hello"
     assert saw_done is True
+    assert echo == "gpt2-served"
+
+
+def test_absorb_chunk_text_last_echo_wins_and_empty_skipped():
+    """The last non-empty ``model`` echo wins; an empty echo never clobbers a
+    good earlier one."""
+    from wrapper.main import _absorb_chunk_text
+    delta, saw_done, echo = _absorb_chunk_text(
+        b'data: {"model":"first","choices":[{"text":"a"}]}\n\n'
+        b'data: {"model":"","choices":[{"text":"b"}]}\n\n'
+        b'data: {"model":"second","choices":[{"text":"c"}]}\n\n'
+    )
+    assert delta == "abc"
+    assert saw_done is False
+    assert echo == "second"
 
 
 def test_absorb_chunk_text_ignores_keepalive_and_junk():
     from wrapper.main import _absorb_chunk_text
-    delta, saw_done = _absorb_chunk_text(b": keep-alive\n\n")
+    delta, saw_done, echo = _absorb_chunk_text(b": keep-alive\n\n")
     assert delta == ""
     assert saw_done is False
+    assert echo is None
 
 
 def test_absorb_chunk_logprobs_flattens_normalised_entries():
@@ -1364,11 +1380,11 @@ async def test_compare_lane_over_context_isolated(client, monkeypatch):
 
 async def _start_generation_and_subscribe(client, monkeypatch, *, fake_stream):
     """Helper: log in, POST a generation against ``fake_stream``, subscribe to
-    the in-memory state, return (gen_uuid, drain_task, captured)."""
+    the in-memory state, return (gen_uuid, drain_task, captured, key_id)."""
     from wrapper.main import app
 
     user_id, email = await _make_user()
-    chat_id, _ = await _make_chat_and_key(user_id)
+    chat_id, key_id = await _make_chat_and_key(user_id)
     _login(client, email, "test-pw-12345")
 
     monkeypatch.setattr(proxymod, "stream_post_with_status", fake_stream)
@@ -1408,10 +1424,10 @@ async def _start_generation_and_subscribe(client, monkeypatch, *, fake_stream):
         finally:
             state.unsubscribe(q)
 
-    return gen_uuid, asyncio.create_task(_drain()), captured
+    return gen_uuid, asyncio.create_task(_drain()), captured, key_id
 
 
-async def _wait_for_terminal_row(gen_uuid):
+async def _wait_for_terminal_row(gen_uuid, key_id):
     """Poll the ChatGeneration row + the matching ApiRequest row."""
     from wrapper.models import ApiRequest
 
@@ -1431,7 +1447,14 @@ async def _wait_for_terminal_row(gen_uuid):
                 api_row = (
                     await s.execute(
                         select(ApiRequest)
-                        .where(ApiRequest.endpoint == "/workbench")
+                        .where(
+                            ApiRequest.endpoint == "/workbench",
+                            # Scope to THIS test's freshly minted key: the
+                            # shared dev DB accumulates /workbench rows across
+                            # tests and dev-server traffic, so the globally
+                            # newest row can shadow ours mid-poll (issue #12).
+                            ApiRequest.key_id == key_id,
+                        )
                         .order_by(ApiRequest.ts.desc())
                     )
                 ).scalars().first()
@@ -1468,7 +1491,7 @@ async def test_upstream_unreachable_threads_through_sse_and_api_requests(
         body=b"ConnectError: DNS failure",
         release=release,
     )
-    gen_uuid, drain_task, captured = await _start_generation_and_subscribe(
+    gen_uuid, drain_task, captured, key_id = await _start_generation_and_subscribe(
         client, monkeypatch, fake_stream=fake
     )
     release.set()
@@ -1483,7 +1506,7 @@ async def test_upstream_unreachable_threads_through_sse_and_api_requests(
     assert b'"status": 502' in body
     assert b'"status": 0' not in body
 
-    row, api_row = await _wait_for_terminal_row(gen_uuid)
+    row, api_row = await _wait_for_terminal_row(gen_uuid, key_id)
     assert row.status == "failed"
     # ApiRequest row preserves the kind, not the generic "upstream_error".
     assert api_row is not None, "no ApiRequest row written for workbench failure"
@@ -1502,7 +1525,7 @@ async def test_vllm_oom_threads_through_sse_and_api_requests(client, monkeypatch
         body=b'{"error":{"message":"CUDA out of memory","type":"engine"}}',
         release=release,
     )
-    gen_uuid, drain_task, captured = await _start_generation_and_subscribe(
+    gen_uuid, drain_task, captured, key_id = await _start_generation_and_subscribe(
         client, monkeypatch, fake_stream=fake
     )
     release.set()
@@ -1523,7 +1546,7 @@ async def test_vllm_oom_threads_through_sse_and_api_requests(client, monkeypatch
     assert done_frames, f"no done frame in captured broadcasts: {captured!r}"
     assert b'"code": "vllm_oom"' in done_frames[0]
 
-    row, api_row = await _wait_for_terminal_row(gen_uuid)
+    row, api_row = await _wait_for_terminal_row(gen_uuid, key_id)
     assert row.status == "failed"
     assert api_row is not None
     assert api_row.error_kind == "vllm_oom"
@@ -1544,7 +1567,7 @@ async def test_upstream_4xx_without_kind_falls_back_to_generic_label(
         body=b'{"error":{"message":"model not found"}}',
         release=release,
     )
-    gen_uuid, drain_task, captured = await _start_generation_and_subscribe(
+    gen_uuid, drain_task, captured, key_id = await _start_generation_and_subscribe(
         client, monkeypatch, fake_stream=fake
     )
     release.set()
@@ -1556,7 +1579,7 @@ async def test_upstream_4xx_without_kind_falls_back_to_generic_label(
     assert b'"code": "upstream_4xx"' in body
     assert b'"status": 404' in body
 
-    row, api_row = await _wait_for_terminal_row(gen_uuid)
+    row, api_row = await _wait_for_terminal_row(gen_uuid, key_id)
     assert row.status == "failed"
     assert api_row is not None
     assert api_row.error_kind == "upstream_4xx"
@@ -1576,7 +1599,7 @@ async def test_internal_exception_threads_internal_error_code(client, monkeypatc
         raise RuntimeError("boom: synthetic test failure")
         yield  # pragma: no cover — makes this an async generator
 
-    gen_uuid, drain_task, captured = await _start_generation_and_subscribe(
+    gen_uuid, drain_task, captured, key_id = await _start_generation_and_subscribe(
         client, monkeypatch, fake_stream=_boom
     )
     release.set()
@@ -1588,7 +1611,7 @@ async def test_internal_exception_threads_internal_error_code(client, monkeypatc
     assert b'"code": "internal_error"' in body
     assert b'"status": 500' in body
 
-    row, api_row = await _wait_for_terminal_row(gen_uuid)
+    row, api_row = await _wait_for_terminal_row(gen_uuid, key_id)
     assert row.status == "failed"
     assert api_row is not None
     assert api_row.error_kind == "internal_error"

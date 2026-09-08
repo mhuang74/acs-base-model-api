@@ -226,9 +226,19 @@ async def _gen_live(state: GenerationState, since: int | None, gen_id: uuid.UUID
             )
 
 
-def _absorb_chunk_text(chunk: bytes) -> tuple[str, bool]:
-    """Extract appended completion text and the [DONE] sentinel from an SSE chunk."""
+def _absorb_chunk_text(chunk: bytes) -> tuple[str, bool, str | None]:
+    """Extract appended completion text, the [DONE] sentinel, and the echoed
+    ``model`` string from one single-pane SSE chunk.
+
+    vLLM echoes its ``served_model_name`` on every chunk (OpenAI completions
+    shape); the *last* non-empty echo wins, so a Run records the model string
+    the upstream actually identified itself as. Returns ``(delta, saw_done,
+    model_echo)`` with ``model_echo=None`` when the chunk carried none — the
+    empty-string case is skipped so a mid-stream gap doesn't clobber a good
+    earlier echo.
+    """
     saw_done = False
+    model_echo: str | None = None
     parts: list[str] = []
     for line in chunk.splitlines():
         if not line.startswith(b"data: "):
@@ -243,12 +253,15 @@ def _absorb_chunk_text(chunk: bytes) -> tuple[str, bool]:
             obj = json.loads(payload_b)
         except json.JSONDecodeError:
             continue
+        m = obj.get("model")
+        if isinstance(m, str) and m.strip():
+            model_echo = m
         choices = obj.get("choices") or []
         if choices and isinstance(choices[0], dict):
             delta = choices[0].get("text") or ""
             if delta:
                 parts.append(delta)
-    return "".join(parts), saw_done
+    return "".join(parts), saw_done, model_echo
 
 
 # Cap the per-snapshot persisted logprobs list so a runaway generation can't
@@ -384,6 +397,10 @@ async def _run_generation_task(
     upstream_error_kind: str | None = None
     upstream_error_msg: str | None = None
     saw_done = False
+    # Last non-empty ``model`` string the upstream echoed back on its completion
+    # chunks (issue #12). Recorded on the Run alongside the requested short id
+    # so exports carry both identities; stays None when upstream never echoed.
+    upstream_model_echo: str | None = None
     # Whether this run asked upstream for per-token logprobs. Gate the (cheap but
     # non-free) per-chunk logprobs parse on it so a plain run never pays for it;
     # when set, we accumulate the normalised entries into ``state.logprobs`` for
@@ -476,9 +493,11 @@ async def _run_generation_task(
                     )
                 if usage:
                     state.usage.update(usage)
-                delta, this_done = _absorb_chunk_text(chunk)
+                delta, this_done, chunk_echo = _absorb_chunk_text(chunk)
                 if this_done:
                     saw_done = True
+                if chunk_echo:
+                    upstream_model_echo = chunk_echo
                 if delta:
                     state.completion_text += delta
                     completion_chars_since_flush += len(delta)
@@ -627,6 +646,31 @@ async def _run_generation_task(
                             # so the UI falls back to plain text; the normalised
                             # list drives the snapshot heatmap otherwise (ACS-189).
                             logprobs=(state.logprobs or None),
+                            # --- Run record: full Sampling settings (issue #12) ---
+                            # Read back off the clamped vLLM body _build_lane_body
+                            # shaped, so the recipe recorded is exactly what the
+                            # upstream saw (Draft values are intent; the Run is
+                            # authoritative). Optional knobs keep NULL when the
+                            # run didn't set them — the same only-when-set policy
+                            # the body itself follows.
+                            top_p=body.get("top_p"),
+                            top_k=body.get("top_k"),
+                            min_p=body.get("min_p"),
+                            presence_penalty=body.get("presence_penalty"),
+                            frequency_penalty=body.get("frequency_penalty"),
+                            repetition_penalty=body.get("repetition_penalty"),
+                            # Seed only when explicitly set (blank = the upstream
+                            # drew randomly; vLLM never echoes the seed back).
+                            seed=body.get("seed"),
+                            # Single stop sequence as typed (the body carries [stop]).
+                            stop=(body["stop"][0] if body.get("stop") else None),
+                            logprobs_count=(body.get("logprobs") or None),
+                            # A freshly-recorded Run is complete by construction;
+                            # recorded_incomplete=True is reserved for pre-migration
+                            # rows and v1-imported Runs.
+                            recorded_incomplete=False,
+                            # The model string the upstream echoed back per chunk.
+                            model_echo=upstream_model_echo,
                         )
                     )
                     chat = (

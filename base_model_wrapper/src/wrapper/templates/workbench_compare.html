@@ -449,9 +449,9 @@
   "defaultTemperature": default_temperature,
   "maxLanes": max_lanes,
   "modelLabels": model_labels,
+  "prefillLanes": compare_prefill_lanes or [],
   "noKey": no_key
 } | tojson }}</script>
-
 <script>
 (function () {
   const cfg = JSON.parse(document.getElementById('cmp-config').textContent);
@@ -1443,8 +1443,32 @@
     }
   });
 
-  // Seed with two lanes by default.
-  if (!cfg.noKey) {
+  // Seed lanes. Restore chain (issue #12): the compare panel prefills its
+  // lanes from the most recent Compare snapshot of the Session (lane configs
+  // as saved at Run-all, server-resolved into cfg.prefillLanes); falls back
+  // to the default two (or one inert) lane when none exists. Config-only:
+  // the stored completions are NOT replayed on a page load — that stays the
+  // history rows' explicit "Restore" button.
+  const prefill = Array.isArray(cfg.prefillLanes) ? cfg.prefillLanes : [];
+  if (prefill.length) {
+    prefill.slice(0, cfg.maxLanes).forEach(function (laneCfg) {
+      lanesEl.appendChild(buildLane({
+        model: laneCfg.model,
+        max_tokens: laneCfg.max_tokens,
+        temperature: laneCfg.temperature,
+        top_p: laneCfg.top_p,
+        top_k: laneCfg.top_k,
+        min_p: laneCfg.min_p,
+        presence_penalty: laneCfg.presence_penalty,
+        frequency_penalty: laneCfg.frequency_penalty,
+        repetition_penalty: laneCfg.repetition_penalty,
+        seed: (laneCfg.seed == null ? '' : laneCfg.seed),
+        stop: (laneCfg.stop == null ? '' : laneCfg.stop),
+        logprobsOn: !!laneCfg.logprobs,
+        logprobsCount: (laneCfg.logprobs != null ? laneCfg.logprobs : 5),
+      }).root);
+    });
+  } else if (!cfg.noKey) {
     lanesEl.appendChild(buildLane({}).root);
     lanesEl.appendChild(buildLane({}).root);
   } else {

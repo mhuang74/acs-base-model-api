@@ -1200,7 +1200,7 @@
         </label>
         <label><span class="term-help" tabindex="0" data-help="Upper limit on how many tokens one Continue can generate. Generation can stop earlier (stop text or a natural end).">Max tokens</span>
           <input type="number" id="wb-max-tokens" name="max_tokens" class="wb-num"
-                 value="{{ chat.last_max_tokens }}" min="1" max="{{ max_max_tokens }}">
+                 value="{{ (composer_settings.max_tokens if composer_settings else chat.last_max_tokens) }}" min="1" max="{{ max_max_tokens }}">
           {# Surface the cap inline (ACS-346) so it's discoverable before a
              request trips it, matching how Compare shows its lane cap. #}
           <span class="wb-cap-hint">Max {{ "{:,}".format(max_max_tokens) }} tokens</span>
@@ -1208,10 +1208,10 @@
         <label><span class="term-help" tabindex="0" data-help="How random sampling is. 0 always picks the most likely token; 1 samples the model's raw probabilities; higher values get increasingly chaotic.">Temperature</span>
           <span class="wb-temp-control">
             <input type="range" id="wb-temperature-range" class="wb-range"
-                   min="0" max="5" step="0.1" value="{{ chat.last_temperature }}"
+                   min="0" max="5" step="0.1" value="{{ (composer_settings.temperature if composer_settings else chat.last_temperature) }}"
                    aria-label="Temperature slider">
             <input type="number" id="wb-temperature" name="temperature" class="wb-num wb-num-temp"
-                   value="{{ chat.last_temperature }}" min="0" max="100" step="0.1">
+                   value="{{ (composer_settings.temperature if composer_settings else chat.last_temperature) }}" min="0" max="100" step="0.1">
           </span>
           <small class="wb-temp-hint">0–5 on the slider, up to 100 in the box. Above ~10 barely changes anything.</small>
         </label>
@@ -1222,33 +1222,42 @@
          downward, pushing content, instead of a floating popover that overflowed
          the footer). Same knobs as the compare lanes; named inputs so the
          existing FormData submit picks them up and the route shapes them via
-         _build_lane_body. Numeric inputs clamp on commit (see JS below). #}
+         _build_lane_body. Numeric inputs clamp on commit (see JS below).
+         step="any" on the float knobs so a typed off-grid value (e.g.
+         top_p=0.42) doesn't trip HTML5 stepMismatch and silently block the
+         form submit — the arrows would only step by 0.05 anyway, and the
+         server clamps/validates via _build_lane_body regardless. The integer
+         knobs keep step="1" (and the clamp JS below rounds them). #}
       <details class="wb-sampling" id="wb-sampling">
         <summary class="wb-sampling-summary">Sampling parameters</summary>
-        {# step="any" on the float knobs so a typed off-grid value (e.g.
-           top_p=0.42) doesn't trip HTML5 stepMismatch and silently block the
-           form submit — the arrows would only step by 0.05 anyway, and the
-           server clamps/validates via _build_lane_body regardless. The integer
-           knobs keep step="1" (and the clamp JS below rounds them). #}
         <div class="wb-sampling-grid">
-          <label><span class="term-help" tabindex="0" data-help="Nucleus sampling: sample only from the smallest set of tokens whose probabilities add up to this value. 1 = off.">top_p</span> <input type="number" name="top_p" class="wb-num" value="1" min="0" max="1" step="any"></label>
-          <label><span class="term-help" tabindex="0" data-help="Only the k most likely next tokens can be picked: k = 1 always takes the single top token, k = 50 chooses among the top 50. -1 = no limit.">top_k</span> <input type="number" name="top_k" class="wb-num" value="-1" min="-1" step="1"></label>
-          <label><span class="term-help" tabindex="0" data-help="Drops long-shot tokens relative to the best one: at 0.1, any token less than 10% as likely as the top token is excluded. 0 = off.">min_p</span> <input type="number" name="min_p" class="wb-num" value="0" min="0" max="1" step="any"></label>
-          <label><span class="term-help" tabindex="0" data-help="Penalises every token that has already appeared at least once — positive values nudge the model toward new words and topics.">presence</span> <input type="number" name="presence_penalty" class="wb-num" value="0" min="-2" max="2" step="any"></label>
-          <label><span class="term-help" tabindex="0" data-help="Penalises tokens more the more often they have already appeared — positive values reduce repetition.">frequency</span> <input type="number" name="frequency_penalty" class="wb-num" value="0" min="-2" max="2" step="any"></label>
-          <label><span class="term-help" tabindex="0" data-help="Scales down the score of already-seen tokens. 1 = off; above 1 discourages repeats, below 1 encourages them.">repetition</span> <input type="number" name="repetition_penalty" class="wb-num" value="1" min="0" max="2" step="any"></label>
-          <label><span class="term-help" tabindex="0" data-help="Makes sampling reproducible: the same prompt, settings and seed give the same output. Empty = different result each run.">seed</span> <input type="number" id="wb-seed" name="seed" class="wb-num" placeholder="random" min="0" step="1"></label>
-          <label><span class="term-help" tabindex="0" data-help="When the model produces this exact text, generation stops there (the stop text itself is not included).">stop</span> <input type="text" id="wb-stop-seq" name="stop" class="wb-num" placeholder="(none)"></label>
+          {# Restore chain (issue #12): values pre-fill from the Session's most
+             recent successful Run (server-resolved); NULL/unset knobs fall back
+             to the built-in defaults — never empty, because empty would 422 the
+             float Form params. recorded_incomplete Runs restore these defaults
+             too (their extended settings were never captured); the marker only
+             changes the history row's label. #}
+          {% set cs = composer_settings if composer_settings else {} %}
+          <label><span class="term-help" tabindex="0" data-help="Nucleus sampling: sample only from the smallest set of tokens whose probabilities add up to this value. 1 = off.">top_p</span> <input type="number" name="top_p" class="wb-num" value="{{ cs.top_p if cs.top_p is defined and cs.top_p is not none else 1 }}" min="0" max="1" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Only the k most likely next tokens can be picked: k = 1 always takes the single top token, k = 50 chooses among the top 50. -1 = no limit.">top_k</span> <input type="number" name="top_k" class="wb-num" value="{{ cs.top_k if cs.top_k is defined and cs.top_k is not none else -1 }}" min="-1" step="1"></label>
+          <label><span class="term-help" tabindex="0" data-help="Drops long-shot tokens relative to the best one: at 0.1, any token less than 10% as likely as the top token is excluded. 0 = off.">min_p</span> <input type="number" name="min_p" class="wb-num" value="{{ cs.min_p if cs.min_p is defined and cs.min_p is not none else 0 }}" min="0" max="1" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Penalises every token that has already appeared at least once — positive values nudge the model toward new words and topics.">presence</span> <input type="number" name="presence_penalty" class="wb-num" value="{{ cs.presence_penalty if cs.presence_penalty is defined and cs.presence_penalty is not none else 0 }}" min="-2" max="2" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Penalises tokens more the more often they have already appeared — positive values reduce repetition.">frequency</span> <input type="number" name="frequency_penalty" class="wb-num" value="{{ cs.frequency_penalty if cs.frequency_penalty is defined and cs.frequency_penalty is not none else 0 }}" min="-2" max="2" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Scales down the score of already-seen tokens. 1 = off; above 1 discourages repeats, below 1 encourages them.">repetition</span> <input type="number" name="repetition_penalty" class="wb-num" value="{{ cs.repetition_penalty if cs.repetition_penalty is defined and cs.repetition_penalty is not none else 1 }}" min="0" max="2" step="any"></label>
+          <label><span class="term-help" tabindex="0" data-help="Makes sampling reproducible: the same prompt, settings and seed give the same output. Empty = different result each run.">seed</span> <input type="number" id="wb-seed" name="seed" class="wb-num" placeholder="random" min="0" step="1" value="{{ cs.seed if cs.seed is defined and cs.seed else '' }}"></label>
+          <label><span class="term-help" tabindex="0" data-help="When the model produces this exact text, generation stops there (the stop text itself is not included).">stop</span> <input type="text" id="wb-stop-seq" name="stop" class="wb-num" placeholder="(none)" value="{{ cs.stop if cs.stop is defined and cs.stop else '' }}"></label>
         </div>
       </details>
 
       {# Logprobs / heatmap toggle surfaced at composer level (ACS-188) so this
          headline feature isn't buried at the bottom of a collapsed panel. The
          count input is disabled (FormData omits it → logprobs off) until the box
-         is ticked; ticking also reveals the read-only heatmap companion below. #}
+         is ticked; ticking also reveals the read-only heatmap companion below.
+         Restore chain (issue #12): checked + count pre-fill from the Session's
+         most recent successful Run. #}
       <label class="wb-logprobs-toggle">
-        <input type="checkbox" id="wb-logprobs-on"> <span class="term-help" tabindex="0" data-help="Record each generated token's probability (its logprob) plus the top-k alternatives, and colour the completion by them in the panel under the output box. The number sets k.">Heatmap</span>
-        <input type="number" id="wb-logprobs" name="logprobs" class="wb-num" value="5" min="1" max="20" step="1" disabled>
+        <input type="checkbox" id="wb-logprobs-on" {% if cs and cs.logprobs_on %}checked{% endif %}> <span class="term-help" tabindex="0" data-help="Record each generated token's probability (its logprob) plus the top-k alternatives, and colour the completion by them in the panel under the output box. The number sets k.">Heatmap</span>
+        <input type="number" id="wb-logprobs" name="logprobs" class="wb-num" value="{{ (cs.logprobs_count if cs and cs.logprobs_count else 5) }}" min="1" max="20" step="1" {% if not (cs and cs.logprobs_on) %}disabled{% endif %}>
         <span class="wb-logprobs-hint">colour each generated token by probability (panel under the output box)</span>
       </label>
       {# Gradient legend — only meaningful (and visible) while the heatmap is
@@ -1285,7 +1294,7 @@
                    rewrites this to the viewer's local time from data-ts, matching how
                    Compare mode formats its timestamps (ACS-346). #}
                 <span class="ts" data-ts="{{ s.ts.isoformat() }}">{{ s.ts.strftime('%Y-%m-%d %H:%M') }} UTC</span>
-                <span class="meta">+{{ s.n_completion }} tok{% if s.cancelled %} <span class="muted">(cancelled)</span>{% endif %}</span>
+                <span class="meta">+{{ s.n_completion }} tok{% if s.cancelled %} <span class="muted">(cancelled)</span>{% endif %}{% if s.recorded_incomplete %} <span class="muted" title="Pre-migration Run — extended sampling settings were never recorded; they restore as built-in defaults and reproduction is not guaranteed.">· incomplete record</span>{% elif s.temperature == 0 or s.seed is not none %} <span class="muted" title="Reproducible Run: recorded with an explicit seed (or temperature 0). Same prompt + settings + seed should reproduce this completion.">· reproducible</span>{% else %} <span class="muted" title="No seed recorded — the upstream drew randomly (vLLM never echoes the effective seed back), so identical output is not expected.">· non-reproducible</span>{% endif %}</span>
                 {% set model_label = model_labels.get(s.model) if s.model else None %}
                 <span class="model">{{ model_label or s.model or "—" }}</span>
                 <span class="summary-spacer"></span>
@@ -1640,6 +1649,81 @@
           if (heatmapLegend) heatmapLegend.hidden = !logprobsOn.checked;
         });
       }
+
+      // ---- URL Draft (issue #12) ------------------------------------------
+      // The Draft is the URL-encoded Sampling settings panel: rewritten via
+      // history.replaceState on EVERY panel change (no history spam), applied
+      // back on page load, and re-encoded by the post-Submit redirect (which
+      // carries the client-clamped values the user sees). Draft values are
+      // intent; the Run records the server-clamped recipe actually sent
+      // upstream — the two can differ slightly by design, and the Run is
+      // authoritative for reproduction.
+      //
+      // Restore chain: URL Draft (if present) > the Session's most recent
+      // successful Run (already server-rendered into the inputs) > built-in
+      // defaults. Applying the Draft here, after the server render, is what
+      // makes the URL win.
+      const DRAFT_KEYS = ['max_tokens', 'temperature', 'top_p', 'top_k', 'min_p',
+        'presence_penalty', 'frequency_penalty', 'repetition_penalty', 'seed', 'stop'];
+      function draftParams() {
+        const fd = new FormData(form);
+        const out = new URLSearchParams();
+        for (const k of DRAFT_KEYS) {
+          const v = fd.get(k);
+          if (typeof v === 'string') out.set(k, v);
+        }
+        // Logprobs travels as on=<count> (or nothing when off) so a Draft URL
+        // round-trips the toggle.
+        if (logprobsEnabled()) out.set('logprobs', logprobsCount.value || '5');
+        return out;
+      }
+      function writeDraft() {
+        const url = new URL(window.location.href);
+        const draft = draftParams();
+        for (const k of DRAFT_KEYS.concat(['logprobs'])) url.searchParams.delete(k);
+        for (const [k, v] of draft) url.searchParams.set(k, v);
+        window.history.replaceState({}, '', url);
+      }
+      function applyDraft() {
+        const sp = new URLSearchParams(window.location.search);
+        if (!sp.toString()) return;  // no Draft in the URL → keep server prefill
+        const byId = {
+          max_tokens: document.getElementById('wb-max-tokens'),
+          temperature: document.getElementById('wb-temperature'),
+        };
+        for (const k of DRAFT_KEYS) {
+          const v = sp.get(k);
+          if (v == null) continue;
+          const inp = form.elements[k] || byId[k];
+          if (inp) inp.value = v;
+        }
+        const lp = sp.get('logprobs');
+        if (lp != null && logprobsOn && logprobsCount) {
+          logprobsOn.checked = true;
+          logprobsCount.disabled = false;
+          logprobsCount.value = lp;
+          if (heatmapWrap) heatmapWrap.hidden = false;
+          if (heatmapLegend) heatmapLegend.hidden = false;
+        }
+      }
+      applyDraft();
+      // Rewrite the Draft after every panel change. 'input' covers typing +
+      // slider drags (debounced via rAF-style trailing timeout); 'change'
+      // covers checkbox flips and the commit clamp.
+      let draftTimer = null;
+      ['input', 'change'].forEach(function (evt) {
+        form.addEventListener(evt, function (e) {
+          if (!(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) return;
+          if (e.target.type === 'checkbox' && evt === 'input') return;
+          if (draftTimer) clearTimeout(draftTimer);
+          draftTimer = setTimeout(writeDraft, 150);
+        });
+      });
+      // Re-encode the Draft at Submit time with the client-clamped values the
+      // user sees, so a reload right after a Run keeps the panel state (the
+      // submit is fetch-based and never navigates, so nothing else updates the
+      // URL).
+      form.addEventListener('submit', function () { writeDraft(); });
 
       // ---- custom model picker --------------------------------------------
       // Native <select> can't host the icons + hover tooltip we want, so the
